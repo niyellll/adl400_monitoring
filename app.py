@@ -131,7 +131,7 @@ with tab_bill:
         show = df.copy()
         for col in ["Tarif (Rp/kWh)", "Biaya Energi", "PPJ", "Biaya Admin", "Total (Rp)"]:
             show[col] = show[col].map(rupiah)
-        st.dataframe(show, use_container_width=True, hide_index=True)
+        st.dataframe(show, width="stretch", hide_index=True)
         st.metric("Total seluruh tenant", rupiah(df["Total (Rp)"].sum()))
         b1, b2 = st.columns(2)
         b1.download_button("⬇️ CSV", df.to_csv(index=False).encode("utf-8"),
@@ -178,7 +178,7 @@ with tab_set:
          "lokasi": pd.Series(dtype=str), "tarif_override": pd.Series(dtype=float),
          "aktif": pd.Series(dtype=bool)})
     mdf["aktif"] = mdf["aktif"].astype(bool)
-    edited = st.data_editor(mdf, num_rows="dynamic", use_container_width=True, hide_index=True,
+    edited = st.data_editor(mdf, num_rows="dynamic", width="stretch", hide_index=True,
                             column_config={"slave": st.column_config.NumberColumn("Slave", min_value=1, max_value=247, step=1, required=True),
                                            "tenant": st.column_config.TextColumn("Tenant", required=True),
                                            "lokasi": "Lokasi",
