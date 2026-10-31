@@ -32,7 +32,7 @@ div[data-testid="stVerticalBlockBorderWrapper"] {border-radius: 14px}
 </style>""", unsafe_allow_html=True)
 
 with st.sidebar:
-    st.markdown("### ⚡ Monitoring Tenant")
+    st.markdown("### ⚡ Monitoring Energi Tenant")
     st.caption("Lippo Plaza Sidoarjo")
     pilihan_mode = st.radio(
         "Sumber data",
@@ -42,9 +42,9 @@ with st.sidebar:
         key="pilihan_mode",
     )
     if pilihan_mode.startswith("Demo"):
-        st.info("Mode demo aktif. Semua angka adalah simulasi, bukan hasil pengukuran tenant.")
+        st.info("Mode demonstrasi aktif. Informasi berikut merupakan data simulasi, bukan hasil pengukuran lapangan.")
     else:
-        st.warning("Mode Live membutuhkan collector dan database pembacaan meter yang aktif.")
+        st.warning("Mode operasional membutuhkan koneksi ke sistem pembacaan meter dan database yang aktif.")
     st.divider()
 
 
@@ -344,47 +344,47 @@ def render_demo():
 
     # ---------------------------------------------------------------- SIDEBAR
     with st.sidebar:
-        st.markdown("### ⚙️ Atur tarif")
-        tarif = st.number_input("Tarif listrik (Rp per kWh)", value=1444.70, step=10.0)
-        ppj = st.number_input("PPJ / pajak (%)", value=3.0, step=0.5)
-        admin = st.number_input("Biaya admin per tenant (Rp)", value=50000.0, step=5000.0)
-        st.caption("Coba ubah tarif untuk melihat pengaruhnya pada tagihan contoh. Semua tenant memakai tarif simulasi yang sama.")
+        st.markdown("### Pengaturan Tarif Simulasi")
+        tarif = st.number_input("Tarif Energi (Rp/kWh)", value=1444.70, step=10.0)
+        ppj = st.number_input("PPJ (%)", value=3.0, step=0.5)
+        admin = st.number_input("Biaya Administrasi per Tenant (Rp)", value=50000.0, step=5000.0)
+        st.caption("Sesuaikan komponen biaya untuk melihat pengaruhnya terhadap estimasi tagihan. Tarif berlaku untuk seluruh tenant demo.")
         st.divider()
-        st.caption("Perubahan pengaturan demo tidak mengubah data meter maupun tarif Live.")
+        st.caption("Pengaturan simulasi tidak memengaruhi database dan konfigurasi mode operasional.")
 
     tarif_of = {t[0]: (t[6] or tarif) for t in TENANTS}
     df_all = history()
 
     # ---------------------------------------------------------------- HEADER
     st.markdown(f"""<div class="hero">
-    <span class="pill">🧪 MODE DEMO · DATA SIMULASI</span>
-    <h1>⚡ Monitoring Listrik Tenant Mall</h1>
-    <p>Simulasi pemakaian listrik 7 tenant. Semua lokasi, kapasitas, dan angka hanya contoh.</p>
+    <span class="pill">🧪 MODE DEMONSTRASI · DATA SIMULASI</span>
+    <h1>⚡ Dashboard Monitoring Energi Tenant</h1>
+    <p>Ringkasan pemakaian energi tujuh tenant. Nilai pengukuran, lokasi, dan kapasitas ditampilkan sebagai simulasi.</p>
     </div>""", unsafe_allow_html=True)
 
-    with st.expander("Panduan cepat — mulai dari sini", expanded=True):
+    with st.expander("Petunjuk Singkat Penggunaan", expanded=True):
         st.markdown(
-            "**1. Pantau Langsung:** lihat daya (kW), pemakaian (kWh), dan perkiraan biaya tenant.\n\n"
-            "**2. Grafik:** pilih tenant, jenis angka, serta waktu yang ingin dilihat.\n\n"
-            "**3. Tagihan:** pilih periode, lihat rincian biaya, dan unduh CSV.\n\n"
-            "**4. Atur tarif:** gunakan menu kiri untuk mencoba tarif listrik, PPJ, dan admin.\n\n"
-            "**Perhatian:** ini hanya latihan. Tidak ada data meter lapangan atau tagihan resmi."
+            "**Ringkasan Pemakaian:** lihat daya, konsumsi energi, dan estimasi biaya setiap tenant.\n\n"
+            "**Analisis Grafik:** tentukan tenant, jenis pengukuran, dan periode yang ingin dianalisis.\n\n"
+            "**Simulasi Tagihan:** pilih periode, periksa rincian biaya, dan unduh laporan CSV.\n\n"
+            "**Pengaturan Tarif:** sesuaikan tarif energi, PPJ, dan biaya administrasi melalui panel samping.\n\n"
+            "**Catatan:** data ini hanya untuk demonstrasi dan tidak dapat digunakan sebagai dasar penagihan resmi."
         )
 
     halaman = st.radio(
-        "Halaman demo",
-        ["Pantau Langsung", "Grafik", "Tagihan", "Panduan"],
+        "Navigasi Dashboard",
+        ["Ringkasan Pemakaian", "Analisis Grafik", "Simulasi Tagihan", "Panduan Pengguna"],
         horizontal=True, key="halaman_demo",
-        help="Pilih satu halaman untuk melihat datanya."
+        help="Pilih bagian yang ingin ditampilkan."
     )
     st.divider()
 
     # ---------------------------------------------------------------- LIVE
-    if halaman == "Pantau Langsung":
+    if halaman == "Ringkasan Pemakaian":
         a_refresh, a_help = st.columns([1, 5])
-        if a_refresh.button("Perbarui contoh data", key="refresh_demo"):
+        if a_refresh.button("Perbarui Data Simulasi", key="refresh_demo"):
             st.rerun()
-        a_help.caption("Angka contoh berubah mengikuti waktu simulasi, bukan meter sungguhan.")
+        a_help.caption("Data yang ditampilkan dihasilkan melalui simulasi, bukan pembacaan meter langsung.")
         # Demo dirender langsung agar konten selalu muncul setelah navigasi.
         def live():
             d = history()
@@ -411,18 +411,18 @@ def render_demo():
             cls = "up" if delta > 0 else "down"
             arrow = "▲" if delta > 0 else "▼"
             kpis = f"""<div class="grid4">
-    <div class="kpi"><div class="ic">🔌</div><div class="lb">Beban listrik sekarang</div><div class="vl">{total_kw:,.1f} kW</div><div class="sub">Total semua tenant</div></div>
-    <div class="kpi"><div class="ic">📊</div><div class="lb">Pemakaian hari ini</div><div class="vl">{total_kwh:,.0f} kWh</div><div class="sub"><span class="{cls}">{arrow} {abs(delta):.0f}%</span> dibanding kemarin jam ini</div></div>
-    <div class="kpi"><div class="ic">💰</div><div class="lb">Perkiraan biaya hari ini</div><div class="vl">{rupiah(total_cost)}</div><div class="sub">Belum termasuk PPJ dan admin</div></div>
-    <div class="kpi"><div class="ic">🟢</div><div class="lb">Meter terhubung</div><div class="vl">{len(cards)} dari {len(cards)}</div><div class="sub">Diperbarui {n:%H:%M:%S} WIB</div></div>
+    <div class="kpi"><div class="ic">🔌</div><div class="lb">Total Daya Saat Ini</div><div class="vl">{total_kw:,.1f} kW</div><div class="sub">Total semua tenant</div></div>
+    <div class="kpi"><div class="ic">📊</div><div class="lb">Konsumsi Energi Hari Ini</div><div class="vl">{total_kwh:,.0f} kWh</div><div class="sub"><span class="{cls}">{arrow} {abs(delta):.0f}%</span> dibanding kemarin jam ini</div></div>
+    <div class="kpi"><div class="ic">💰</div><div class="lb">Estimasi Biaya Hari Ini</div><div class="vl">{rupiah(total_cost)}</div><div class="sub">Belum termasuk PPJ dan biaya administrasi</div></div>
+    <div class="kpi"><div class="ic">🟢</div><div class="lb">Meter Simulasi</div><div class="vl">{len(cards)} dari {len(cards)}</div><div class="sub">Diperbarui {n:%H:%M:%S} WIB</div></div>
     </div>"""
             st.markdown(kpis, unsafe_allow_html=True)
 
             st.markdown(
-                '<div class="hint"><b>Cara baca:</b> kW adalah daya yang dipakai sekarang, '
-                'kWh adalah jumlah energi yang sudah terpakai, dan biaya hari ini adalah '
+                '<div class="hint"><b>Memahami Ringkasan:</b> kW menunjukkan daya yang digunakan saat ini, '
+                'kWh menunjukkan jumlah energi yang telah digunakan, dan estimasi biaya harian adalah '
                 'perkiraan rupiah. Warna hijau, kuning, merah membandingkan beban dengan '
-                '<b>kapasitas contoh</b>, bukan kondisi meter asli.</div>',
+                '<b>kapasitas contoh</b>, bukan hasil pengujian meter fisik.</div>',
                 unsafe_allow_html=True)
 
             html = ['<div class="grid">']
@@ -449,7 +449,7 @@ def render_demo():
 
             # perbandingan biaya hari ini
             cdf = pd.DataFrame({"Tenant": [c[1] for c in cards], "Biaya (Rp)": [c[5] for c in cards]})
-            st.markdown("##### Perkiraan biaya listrik tertinggi hari ini")
+            st.markdown("##### Perbandingan Estimasi Biaya per Tenant")
             st.altair_chart(
                 alt.Chart(cdf).mark_bar(cornerRadiusEnd=6, size=22).encode(
                     y=alt.Y("Tenant:N", sort="-x", title=None),
@@ -461,12 +461,12 @@ def render_demo():
         live()
 
     # ---------------------------------------------------------------- GRAFIK
-    elif halaman == "Grafik":
+    elif halaman == "Analisis Grafik":
         st.markdown(
-            '<div class="hint"><b>Cara memakai grafik:</b> pilih nama tenant, '
-            'pilih data seperti daya (kW), lalu pilih rentang waktu. '
+            '<div class="hint"><b>Petunjuk Analisis Grafik:</b> pilih tenant yang ingin dianalisis, '
+            'pilih parameter, misalnya daya (kW), kemudian tentukan rentang waktu. '
             'Arahkan kursor ke garis untuk melihat nilai pada jam tertentu. '
-            'Semua grafik menggunakan data contoh.</div>',
+            'Seluruh grafik menggunakan data simulasi.</div>',
             unsafe_allow_html=True)
         c1, c2, c3 = st.columns([2, 1, 1])
         pick = c1.multiselect("Tenant", NAMES, default=NAMES[:3])
@@ -489,9 +489,9 @@ def render_demo():
                  base.mark_circle(opacity=0, size=70)).properties(height=360),
                 width="stretch")
         else:
-            st.info("Pilih minimal satu tenant dulu.")
+            st.info("Pilih setidaknya satu tenant untuk menampilkan grafik.")
 
-        st.markdown("##### Total pemakaian per hari (14 hari terakhir)")
+        st.markdown("##### Tren Konsumsi Energi Harian (14 Hari Terakhir)")
         dd = df_all.sort_values(["slave", "ts"]).copy()
         dd["pakai"] = dd.groupby("slave")["kwh"].diff().fillna(0)
         dd["Tanggal"] = dd["ts"].dt.normalize()
@@ -509,15 +509,15 @@ def render_demo():
             width="stretch")
 
     # ---------------------------------------------------------------- TAGIHAN
-    elif halaman == "Tagihan":
+    elif halaman == "Simulasi Tagihan":
         st.markdown(
-            '<div class="hint"><b>Cara melihat tagihan:</b> (1) pilih periode, '
-            '(2) baca pemakaian dan jumlah biaya di tabel, '
-            '(3) pilih tenant untuk rincian, (4) klik Unduh CSV bila perlu. '
+            '<div class="hint"><b>Petunjuk Perhitungan Tagihan:</b> (1) tentukan periode, '
+            '(2) tinjau konsumsi energi dan estimasi biaya pada tabel, '
+            '(3) pilih tenant untuk rincian perhitungan, (4) unduh laporan CSV jika diperlukan. '
             'Rumus: (kWh akhir − kWh awal) × tarif + PPJ + admin. '
-            'Ini hanya simulasi, bukan tagihan resmi.</div>',
+            'Hasil perhitungan bersifat simulasi, bukan tagihan resmi.</div>',
             unsafe_allow_html=True)
-        periode = st.radio("Periode tagihan", ["Bulan ini", "7 hari terakhir", "30 hari terakhir"], horizontal=True)
+        periode = st.radio("Periode Perhitungan", ["Bulan ini", "7 hari terakhir", "30 hari terakhir"], horizontal=True)
         today = date.today()
         d1 = {"Bulan ini": today.replace(day=1), "7 hari terakhir": today - timedelta(days=6),
               "30 hari terakhir": today - timedelta(days=29)}[periode]
@@ -539,10 +539,10 @@ def render_demo():
         bill = pd.DataFrame(rows)
 
         m1, m2, m3 = st.columns(3)
-        m1.metric("Total pemakaian", f"{bill['Pemakaian'].sum():,.0f} kWh")
-        m2.metric("Total tagihan semua tenant", rupiah(bill["Total"].sum()))
+        m1.metric("Total Konsumsi Energi", f"{bill['Pemakaian'].sum():,.0f} kWh")
+        m2.metric("Total Estimasi Tagihan", rupiah(bill["Total"].sum()))
         top = bill.loc[bill["Total"].idxmax()]
-        m3.metric("Tagihan terbesar", top["Tenant"], rupiah(top["Total"]), delta_color="off")
+        m3.metric("Estimasi Tagihan Tertinggi", top["Tenant"], rupiah(top["Total"]), delta_color="off")
 
         show = pd.DataFrame({
             "Tenant": bill["Tenant"], "Lokasi": bill["Lokasi"],
@@ -551,10 +551,10 @@ def render_demo():
             "PPJ": bill["PPJ"].map(rupiah), "Admin": bill["Admin"].map(rupiah),
             "Total tagihan": bill["Total"].map(rupiah)})
         st.dataframe(show, width="stretch", hide_index=True)
-        st.download_button("⬇️ Unduh tabel (CSV)", bill.round(2).to_csv(index=False).encode("utf-8"),
+        st.download_button("Unduh Laporan CSV", bill.round(2).to_csv(index=False).encode("utf-8"),
                            f"demo_tagihan_{d1}_{today}.csv", "text/csv")
 
-        st.markdown("##### Contoh tagihan per tenant")
+        st.markdown("##### Rincian Estimasi Tagihan per Tenant")
         pick_t = st.selectbox("Pilih tenant", bill["Tenant"].tolist(), label_visibility="collapsed")
         r = bill[bill["Tenant"] == pick_t].iloc[0]
         st.markdown(f"""<div class="inv"><h4>🧾 {r['Tenant']} <small style="opacity:.6">· {r['Lokasi']}</small></h4>
@@ -571,7 +571,7 @@ def render_demo():
     # ---------------------------------------------------------------- CARA KERJA
     else:
         st.markdown("""
-    ### Langkah menggunakan aplikasi
+    ### Panduan Penggunaan Dashboard
     1. **Pilih Demo** pada sumber data di menu kiri.
     2. **Pantau Langsung:** cek kW, kWh, dan perkiraan biaya masing-masing tenant.
     3. **Grafik:** pilih tenant untuk membandingkan perubahan pemakaian.
@@ -590,7 +590,7 @@ def render_demo():
     <div class="step"><div class="n">4</div><b>Dashboard ini</b><small>Menampilkan pemakaian, grafik, dan tagihan</small></div>
     </div>""", unsafe_allow_html=True)
         st.markdown("""
-    ##### Istilah yang dipakai
+    ##### Penjelasan Parameter Pengukuran
     | Istilah | Artinya |
     |---|---|
     | **kW** (kilowatt) | Daya yang dipakai *saat ini*. Seperti kecepatan mobil di speedometer. |
@@ -600,7 +600,7 @@ def render_demo():
     | **Faktor daya (PF)** | Seberapa efisien listrik dipakai. Makin dekat 1, makin baik. |
     | **PPJ** | Pajak Penerangan Jalan, persentase tambahan dari biaya energi. |
 
-    ##### Yang perlu diketahui
+    ##### Informasi Penting
     - Seluruh angka, lokasi, kapasitas, dan biaya di halaman ini **simulasi**, bukan data pengukuran lapangan.
     - Mode Live membaca database hasil collector yang terhubung ke meter di lokasi. Pilih Mode Live lewat sidebar.
     """)
