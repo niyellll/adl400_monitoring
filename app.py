@@ -371,12 +371,21 @@ def render_demo():
             "**Perhatian:** ini hanya latihan. Tidak ada data meter lapangan atau tagihan resmi."
         )
 
-    tab_live, tab_chart, tab_bill, tab_how = st.tabs(
-        ["Pantau Langsung", "Grafik", "Tagihan", "Panduan"])
+    halaman = st.radio(
+        "Halaman demo",
+        ["Pantau Langsung", "Grafik", "Tagihan", "Panduan"],
+        horizontal=True, key="halaman_demo",
+        help="Pilih satu halaman untuk melihat datanya."
+    )
+    st.divider()
 
     # ---------------------------------------------------------------- LIVE
-    with tab_live:
-        @st.fragment(run_every=5)
+    if halaman == "Pantau Langsung":
+        a_refresh, a_help = st.columns([1, 5])
+        if a_refresh.button("Perbarui contoh data", key="refresh_demo"):
+            st.rerun()
+        a_help.caption("Angka contoh berubah mengikuti waktu simulasi, bukan meter sungguhan.")
+        # Demo dirender langsung agar konten selalu muncul setelah navigasi.
         def live():
             d = history()
             n = now_wib()
@@ -452,7 +461,7 @@ def render_demo():
         live()
 
     # ---------------------------------------------------------------- GRAFIK
-    with tab_chart:
+    elif halaman == "Grafik":
         st.markdown(
             '<div class="hint"><b>Cara memakai grafik:</b> pilih nama tenant, '
             'pilih data seperti daya (kW), lalu pilih rentang waktu. '
@@ -500,7 +509,7 @@ def render_demo():
             width="stretch")
 
     # ---------------------------------------------------------------- TAGIHAN
-    with tab_bill:
+    elif halaman == "Tagihan":
         st.markdown(
             '<div class="hint"><b>Cara melihat tagihan:</b> (1) pilih periode, '
             '(2) baca pemakaian dan jumlah biaya di tabel, '
@@ -560,7 +569,7 @@ def render_demo():
                     unsafe_allow_html=True)
 
     # ---------------------------------------------------------------- CARA KERJA
-    with tab_how:
+    else:
         st.markdown("""
     ### Langkah menggunakan aplikasi
     1. **Pilih Demo** pada sumber data di menu kiri.
