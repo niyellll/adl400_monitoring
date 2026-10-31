@@ -1,15 +1,20 @@
-# Demo Monitoring kWh Tenant
+# Monitoring Listrik Tenant – Acrel ADL400
 
-Versi **demo** dengan data simulasi. Tidak butuh meter, database, atau collector.
+Satu aplikasi **Streamlit** dengan dua mode:
+- **Demo · simulasi** (default): menampilkan contoh enam tenant, tren daya, dan estimasi tagihan. Tidak memerlukan meter atau collector, dan tidak menyimpan data ke database live.
+- **Live · meter asli**: membaca SQLite yang diisi oleh `collector.py`. Memiliki halaman Live, Grafik, Tagihan, dan Pengaturan.
 
-## Jalankan di PC
+## Jalankan
+```bash
+pip install -r requirements.txt
+streamlit run app.py
 ```
-pip install -r demo/requirements.txt
-streamlit run demo/demo_app.py
-```
 
-## Deploy ke Streamlit Community Cloud
-- Repository: repo ini, Branch: `main`
-- **Main file path: `demo/demo_app.py`**
+Untuk pembacaan meter sungguhan, jalankan collector di komputer/gateway yang dapat mengakses perangkat Modbus dan pastikan file database (`ADL400_DB`) sama serta dapat diakses oleh aplikasi Live. Deploy Streamlit Cloud tanpa collector hanya akan menampilkan data nyata bila database hasil pembacaan memang tersedia di lingkungan aplikasi.
 
-Aplikasi asli (membaca meter ADL400) ada di folder induk: `app.py` + `collector.py`.
+## Streamlit Community Cloud
+- Branch: `main`
+- Main file path: **`app.py`**
+- Mode default: **Demo**. Beralih ke Live melalui sidebar.
+
+> Data simulasi bukan data meter lapangan. Tarif, tenant, kapasitas dan tagihan dalam mode Demo hanya contoh.
