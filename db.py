@@ -95,7 +95,7 @@ def insert_esp32_real_reading(slave, data, ts=None):
         con.execute(
             "INSERT INTO esp32_real_readings VALUES (?,?,?,?,?,?,?,?,?,?,?)",
             (ts, slave, data["kwh"], data.get("v_a"), data.get("v_b"), data.get("v_c"),
-             data.get("i_a"), data.get("i_b"), data.get("i_c"), data.get("kw"), data.get("pf"))
+             data.get("i_a"), data.get("i_b"), data.get("i_c"), data.get("kw"), data.get("pf")))
 
 
 def insert_reading(slave, data, ts=None):
