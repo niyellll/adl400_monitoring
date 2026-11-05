@@ -17,8 +17,8 @@ def compute(start_ts: str, end_ts: str) -> pd.DataFrame:
             r = con.execute(
                 f"""SELECT
                      (SELECT kwh FROM {table} WHERE slave=? AND ts>=? AND ts<=? ORDER BY ts ASC  LIMIT 1) AS awal,
-                     (SELECT kwh FROM readings WHERE slave=? AND ts>=? AND ts<=? ORDER BY ts DESC LIMIT 1) AS akhir,
-                     (SELECT COUNT(*) FROM readings WHERE slave=? AND ts>=? AND ts<=?) AS n""",
+                     (SELECT kwh FROM {table} WHERE slave=? AND ts>=? AND ts<=? ORDER BY ts DESC LIMIT 1) AS akhir,
+                     (SELECT COUNT(*) FROM {table} WHERE slave=? AND ts>=? AND ts<=?) AS n""",
                 (m["slave"], start_ts, end_ts) * 3).fetchone()
             if not r["n"]:
                 rows.append({"Slave": m["slave"], "Tenant": m["tenant"], "Lokasi": m["lokasi"],
