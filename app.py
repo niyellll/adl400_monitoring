@@ -59,6 +59,7 @@ def render_live():
     meters = db.get_meters()
     tarif = float(settings["tarif"])
     interval = int(settings["interval"])
+    readings_table = db.active_readings_table()
 
     st.markdown("## Monitoring listrik tenant")
     st.caption("Data pembacaan meter Acrel ADL400 · Mode Live")
@@ -84,12 +85,12 @@ def render_live():
                 age = (datetime.now() - datetime.strptime(last["ts"], "%Y-%m-%d %H:%M:%S")).total_seconds()
                 online = age <= interval * 3 + 10
                 with db.connect() as con:
-                    r = con.execute("SELECT kwh FROM readings WHERE slave=? AND ts>=? ORDER BY ts ASC LIMIT 1",
+                    r = con.execute(f"SELECT kwh FROM {readings_table} WHERE slave=? AND ts>=? ORDER BY ts ASC LIMIT 1",
                                     (m["slave"], today)).fetchone()
                 today_kwh = max(last["kwh"] - r["kwh"], 0) if r else 0
                 cards.append((m, last, today_kwh, online))
                 if online:
-                    total_kw += last["kw"]
+                    total_kw += (last["kw"] or 0)
                 total_cost += today_kwh * (m["tarif_override"] or tarif)
 
             c1, c2, c3 = st.columns(3)
@@ -107,13 +108,15 @@ def render_live():
                         st.write("Belum ada data.")
                         continue
                     a, b = st.columns(2)
-                    a.metric("Daya", f"{last['kw']:.2f} kW")
+                    a.metric("Daya", f"{last['kw']:.2f} kW" if last["kw"] is not None else "—")
                     b.metric("Total kWh", f"{last['kwh']:,.2f}")
                     a.metric("Hari ini", f"{today_kwh:.2f} kWh")
                     b.metric("Biaya hari ini", rupiah(today_kwh * (m["tarif_override"] or tarif)))
-                    st.caption(f"V: {last['v_a']:.0f}/{last['v_b']:.0f}/{last['v_c']:.0f} V · "
-                               f"I: {last['i_a']:.1f}/{last['i_b']:.1f}/{last['i_c']:.1f} A · "
-                               f"PF {last['pf']:.2f}")
+                    def fmt(value, digits=1):
+                        return f"{value:.{digits}f}" if value is not None else "—"
+                    st.caption(f"V: {fmt(last['v_a'], 0)}/{fmt(last['v_b'], 0)}/{fmt(last['v_c'], 0)} V · "
+                               f"I: {fmt(last['i_a'])}/{fmt(last['i_b'])}/{fmt(last['i_c'])} A · "
+                               f"PF {fmt(last['pf'], 2)}")
                     st.caption(f"Update: {last['ts']}")
         live()
 
@@ -139,7 +142,7 @@ def render_live():
             if pick:
                 with db.connect() as con:
                     df = pd.read_sql_query(
-                        f"SELECT ts, slave, {metric} AS val FROM readings "
+                        f"SELECT ts, slave, {metric} AS val FROM {readings_table} "
                         f"WHERE ts>=? AND slave IN ({','.join('?' * len(pick))}) ORDER BY ts",
                         con, params=[since, *pick])
                 if df.empty:
@@ -186,10 +189,22 @@ def render_live():
         new_admin = c3.number_input("Biaya admin / tenant (Rp)", value=float(settings["biaya_admin"]), step=1000.0)
 
         st.subheader("Koneksi ke meter")
-        st.caption("Collector membaca pengaturan ini tiap putaran, tidak perlu restart.")
-        conn = st.radio("Tipe koneksi", ["serial", "tcp"], horizontal=True,
-                        index=0 if settings["conn_type"] == "serial" else 1,
-                        format_func=lambda x: "RS485-USB (serial)" if x == "serial" else "Gateway Modbus TCP")
+        st.caption("RS485-USB / Modbus TCP menggunakan collector lokal; ESP32 Wi-Fi memakai penerima HTTP di laptop.")
+        connection_types = ["serial", "tcp", "esp32"]
+        conn = st.radio("Tipe koneksi", connection_types, horizontal=True,
+                        index=connection_types.index(settings["conn_type"]) if settings["conn_type"] in connection_types else 0,
+                        format_func=lambda x: {"serial": "RS485-USB (serial)", "tcp": "Gateway Modbus TCP",
+                                               "esp32": "ESP32 Wi-Fi (HTTP)"}[x])
+        if conn == "esp32":
+            st.info("ESP32 mengirim pembacaan meter asli melalui HTTP ke server lokal `esp32_receiver.py` "
+                    "yang menyimpan data di SQLite. Port COM, IP gateway, dan port TCP di bawah tidak dipakai "
+                    "untuk koneksi ini.")
+            st.caption("Di laptop: jalankan `python esp32_receiver.py` setelah menetapkan token "
+                       "`ADL400_ESP32_TOKEN` dan memastikan `ADL400_DB` menunjuk ke SQLite yang sama "
+                       "dengan dashboard. Receiver menggunakan port 5001 secara default.")
+            st.warning("Program ESP32 simulasi yang mengirim `123.45` belum membaca ADL400. "
+                       "Mode ini hanya menerima payload REAL yang terautentikasi. "
+                       "Streamlit Cloud tidak dapat membaca SQLite di laptop secara langsung.")
         s1, s2, s3 = st.columns(3)
         serial_port = s1.text_input("Port serial", settings["serial_port"], help="Windows: COM3, Linux: /dev/ttyUSB0")
         baud = s2.selectbox("Baud rate", [2400, 4800, 9600, 19200], index=[2400, 4800, 9600, 19200].index(int(settings["baud"])) if int(settings["baud"]) in [2400, 4800, 9600, 19200] else 2)
