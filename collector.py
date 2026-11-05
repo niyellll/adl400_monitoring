@@ -51,6 +51,10 @@ def probe(slave, start, count):
 
 def cycle(demo, state):
     s = db.get_settings()
+    if s.get("conn_type") == "esp32":
+        print("[INFO] Mode ESP32 Wi-Fi aktif: collector tidak membaca port serial/TCP. "
+              "Jalankan esp32_receiver.py di laptop untuk menerima data HTTP.")
+        return
     meters = db.get_meters(only_active=True)
     if not meters:
         print("Belum ada meter. Tambahkan di tab Pengaturan pada dashboard.")
@@ -83,6 +87,9 @@ def main():
 
     db.init()
     if args.probe:
+        if db.get_settings().get("conn_type") == "esp32":
+            print("Probe hanya tersedia untuk koneksi serial atau TCP.")
+            return
         probe(*args.probe)
         return
     state = {}
