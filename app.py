@@ -205,14 +205,35 @@ def render_live():
             st.warning("Program ESP32 simulasi yang mengirim `123.45` belum membaca ADL400. "
                        "Mode ini hanya menerima payload REAL yang terautentikasi. "
                        "Streamlit Cloud tidak dapat membaca SQLite di laptop secara langsung.")
-        s1, s2, s3 = st.columns(3)
-        serial_port = s1.text_input("Port serial", settings["serial_port"], help="Windows: COM3, Linux: /dev/ttyUSB0")
-        baud = s2.selectbox("Baud rate", [2400, 4800, 9600, 19200], index=[2400, 4800, 9600, 19200].index(int(settings["baud"])) if int(settings["baud"]) in [2400, 4800, 9600, 19200] else 2)
-        parity = s3.selectbox("Parity", ["N", "E", "O"], index=["N", "E", "O"].index(settings["parity"]))
-        t1, t2, t3 = st.columns(3)
-        host = t1.text_input("IP gateway", settings["host"])
-        tcp_port = t2.number_input("Port TCP", value=int(settings["tcp_port"]), step=1)
-        new_interval = t3.number_input("Interval baca (detik)", value=int(settings["interval"]), min_value=5, step=5)
+        serial_port = settings["serial_port"]
+        baud = int(settings["baud"])
+        parity = settings["parity"]
+        host = settings["host"]
+        tcp_port = int(settings["tcp_port"])
+        if conn == "serial":
+            s1, s2, s3 = st.columns(3)
+            serial_port = s1.text_input("Port serial", serial_port, help="Windows: COM3, Linux: /dev/ttyUSB0")
+            baud_options = [2400, 4800, 9600, 19200]
+            baud = s2.selectbox("Baud rate", baud_options, index=baud_options.index(baud) if baud in baud_options else 2)
+            parity = s3.selectbox("Parity", ["N", "E", "O"], index=["N", "E", "O"].index(parity))
+        elif conn == "tcp":
+            t1, t2 = st.columns(2)
+            host = t1.text_input("IP gateway", host)
+            tcp_port = t2.number_input("Port TCP", value=tcp_port, min_value=1, max_value=65535, step=1)
+        else:
+            with db.connect() as con:
+                state = con.execute(
+                    "SELECT COUNT(*) AS n, MAX(ts) AS latest FROM esp32_real_readings"
+                ).fetchone()
+            c1, c2 = st.columns(2)
+            c1.metric("Pembacaan ESP32 REAL tersimpan", int(state["n"]))
+            c2.metric("Terakhir diterima", state["latest"] or "Belum ada")
+            st.caption("Parameter baud, parity dan alamat Modbus diatur di firmware ESP32, "
+                       "mengikuti konfigurasi meter ADL400. Belum ada pembacaan jika perangkat belum teruji.")
+        new_interval = st.number_input("Interval baca / batas status (detik)",
+                                       value=int(settings["interval"]), min_value=5, step=5,
+                                       help="Untuk ESP32, interval pengiriman diatur juga pada firmware. "
+                                            "Nilai ini digunakan dashboard untuk status online/offline.")
 
         if st.button("💾 Simpan pengaturan", type="primary"):
             db.save_settings({"tarif": new_tarif, "ppj_persen": new_ppj, "biaya_admin": new_admin,
