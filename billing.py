@@ -10,12 +10,13 @@ def compute(start_ts: str, end_ts: str) -> pd.DataFrame:
     ppj = float(s["ppj_persen"]) / 100
     admin = float(s["biaya_admin"])
 
+    table = db.active_readings_table()
     rows = []
     with db.connect() as con:
         for m in db.get_meters():
             r = con.execute(
-                """SELECT
-                     (SELECT kwh FROM readings WHERE slave=? AND ts>=? AND ts<=? ORDER BY ts ASC  LIMIT 1) AS awal,
+                f"""SELECT
+                     (SELECT kwh FROM {table} WHERE slave=? AND ts>=? AND ts<=? ORDER BY ts ASC  LIMIT 1) AS awal,
                      (SELECT kwh FROM readings WHERE slave=? AND ts>=? AND ts<=? ORDER BY ts DESC LIMIT 1) AS akhir,
                      (SELECT COUNT(*) FROM readings WHERE slave=? AND ts>=? AND ts<=?) AS n""",
                 (m["slave"], start_ts, end_ts) * 3).fetchone()
