@@ -6,7 +6,7 @@ from datetime import datetime
 DB_PATH = os.environ.get("ADL400_DB", "monitoring.db")
 
 DEFAULT_SETTINGS = {
-    "conn_type": "serial",      # serial | tcp
+    "conn_type": "serial",      # serial | tcp | esp32"
     "serial_port": "COM3",      # contoh Linux: /dev/ttyUSB0
     "baud": "9600",
     "parity": "N",
@@ -44,6 +44,13 @@ def init():
             i_a REAL, i_b REAL, i_c REAL, kw REAL, pf REAL
         );
         CREATE INDEX IF NOT EXISTS idx_readings ON readings (slave, ts);
+        CREATE TABLE IF NOT EXISTS esp32_real_readings (
+            ts TEXT NOT NULL, slave INTEGER NOT NULL,
+            kwh REAL NOT NULL, v_a REAL, v_b REAL, v_c REAL,
+            i_a REAL, i_b REAL, i_c REAL, kw REAL, pf REAL
+        );
+        CREATE INDEX IF NOT EXISTS idx_esp32_real_readings
+            ON esp32_real_readings (slave, ts);
         """)
         for k, v in DEFAULT_SETTINGS.items():
             con.execute("INSERT OR IGNORE INTO settings VALUES (?, ?)", (k, v))
@@ -77,6 +84,20 @@ def replace_meters(rows):
                  r.get("tarif_override"), 1 if r.get("aktif", True) else 0))
 
 
+def active_readings_table():
+    """Return a trusted table name; never interpolate user-supplied values."""
+    return "esp32_real_readings" if get_settings().get("conn_type") == "esp32" else "readings"
+
+
+def insert_esp32_real_reading(slave, data, ts=None):
+    ts = ts or datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    with connect() as con:
+        con.execute(
+            "INSERT INTO esp32_real_readings VALUES (?,?,?,?,?,?,?,?,?,?,?)",
+            (ts, slave, data["kwh"], data.get("v_a"), data.get("v_b"), data.get("v_c"),
+             data.get("i_a"), data.get("i_b"), data.get("i_c"), data.get("kw"), data.get("pf"))
+
+
 def insert_reading(slave, data, ts=None):
     ts = ts or datetime.now().strftime("%Y-%m-%d %H:%M:%S")
     with connect() as con:
@@ -87,7 +108,8 @@ def insert_reading(slave, data, ts=None):
 
 
 def last_reading(slave):
+    table = active_readings_table()
     with connect() as con:
-        r = con.execute("SELECT * FROM readings WHERE slave=? ORDER BY ts DESC LIMIT 1",
+        r = con.execute(f"SELECT * FROM {table} WHERE slave=? ORDER BY ts DESC LIMIT 1",
                         (slave,)).fetchone()
         return dict(r) if r else None
