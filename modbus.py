@@ -25,11 +25,11 @@ FIELDS = {
     "v_a": (0x0061, 1, 0.1, False),     # tegangan fasa A (V)
     "v_b": (0x0062, 1, 0.1, False),
     "v_c": (0x0063, 1, 0.1, False),
-    "i_a": (0x0064, 1, 0.001, False),   # arus fasa A (A)
-    "i_b": (0x0065, 1, 0.001, False),
-    "i_c": (0x0066, 1, 0.001, False),
-    "kw": (0x0067, 2, 0.001, True),     # daya aktif total (kW)
-    "pf": (0x006B, 1, 0.001, True),     # faktor daya total
+    "i_a": (0x0064, 1, 0.01, False),    # arus fasa A (A), teruji Slave 31
+    "i_b": (0x0065, 1, 0.01, False),
+    "i_c": (0x0066, 1, 0.01, False),
+    "kw": (0x006A, 1, 0.001, True),     # daya aktif total (kW), teruji
+    "pf": (0x0076, 1, 0.001, True),     # faktor daya total, teruji
 }
 
 
