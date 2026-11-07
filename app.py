@@ -241,6 +241,30 @@ def render_live():
                                 if top >= float(settings.get("current_alert_a", 100)):
                                     st.warning("Arus mencapai ambang pemantauan. Periksa CT, "
                                                "kapasitas, kontrak, dan beban bersama teknisi.")
+                            # Bandingkan hanya dengan pembacaan sebelumnya dari slave sama.
+                            previous = [item for item in records
+                                        if item["slave"] == r["slave"] and item["ts"] < r["ts"]]
+                            if previous:
+                                prev = previous[-1]
+                                st.markdown("##### Analisis perubahan dari pembacaan sebelumnya")
+                                st.caption(f"Pembanding: {prev['ts']} → {r['ts']}")
+                                for phase, label in (("a", "R / L1"), ("b", "S / L2"), ("c", "T / L3")):
+                                    old_a, new_a = prev["i_" + phase], r["i_" + phase]
+                                    if old_a is not None and new_a is not None:
+                                        change = new_a - old_a
+                                        pct = (change / old_a * 100) if old_a > 0 else None
+                                        msg = f"{label}: {old_a:.2f} → {new_a:.2f} A ({change:+.2f} A)"
+                                        if pct is not None:
+                                            msg += f" / {pct:+.1f}%"
+                                        st.write(msg)
+                                        if (pct is not None and pct >= 30 and change >= 1) or (
+                                                old_a == 0 and new_a >= float(settings.get("current_alert_a", 100))):
+                                            st.warning(f"Terindikasi lonjakan arus {label} dibanding sampel sebelumnya. "
+                                                       "Periksa beban serta interval pencatatan; bukan diagnosis gangguan.")
+                                if prev["kw"] is not None and r["kw"] is not None:
+                                    st.write(f"Daya total: {prev['kw']:.3f} → {r['kw']:.3f} kW")
+                            else:
+                                st.caption("Belum ada rekaman pembanding sebelumnya pada rentang ini.")
                             if r["rate"] is not None:
                                 st.write(f"Tarif snapshot: Rp {r['rate']:,.2f}/kWh · "
                                          f"kWh antar sampel: {r['delta_kwh'] if r['delta_kwh'] is not None else 'tidak tersedia'} · "
