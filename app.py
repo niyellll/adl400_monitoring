@@ -20,12 +20,14 @@ st.set_page_config(
 )
 
 st.markdown("""<style>
-.block-container {max-width: 1320px; padding-top: 1.5rem; padding-bottom: 2.5rem}
+.block-container {max-width: 1500px; padding-top: 1.5rem; padding-bottom: 2.5rem}
 h1,h2,h3 {letter-spacing: -.025em}
 [data-testid="stMetric"] {padding: 14px 16px; border: 1px solid rgba(128,128,128,.17);
 border-radius: 12px; background: rgba(128,128,128,.045)}
-[data-testid="stMetricLabel"] {font-size: .86rem}
-[data-testid="stMetricValue"] {font-size: 1.65rem}
+[data-testid="stMetricLabel"] {font-size: .86rem; white-space: normal; overflow-wrap: anywhere}
+[data-testid="stMetricValue"] {font-size: clamp(1.15rem, 1.8vw, 1.65rem); overflow-wrap: anywhere}
+[data-testid="stMetric"] {min-width: 0}
+[data-testid="column"] {min-width: 0}
 .stTabs [data-baseweb="tab-list"] {gap: 12px}
 .stTabs [data-baseweb="tab"] {font-weight: 600}
 div[data-testid="stVerticalBlockBorderWrapper"] {border-radius: 14px}
@@ -99,9 +101,12 @@ def render_live():
             c3.metric("Meter online", f"{sum(1 for c in cards if c[3])} / {len(cards)}")
             st.divider()
 
-            cols = st.columns(3)
+            # Satu meter mendapat satu kartu lebar penuh; banyak meter dibagi
+            # maksimal dua kolom agar label dan angka tidak terpotong.
+            num_columns = min(len(cards), 2)
+            cols = st.columns(num_columns)
             for i, (m, last, today_kwh, online) in enumerate(cards):
-                with cols[i % 3].container(border=True):
+                with cols[i % num_columns].container(border=True):
                     st.markdown(f"**{m['tenant']}** &nbsp; {'🟢 online' if online else '🔴 offline'}")
                     st.caption(f"Slave {m['slave']} · {m['lokasi'] or '-'}")
                     if not last:
@@ -150,7 +155,36 @@ def render_live():
                 else:
                     df["ts"] = pd.to_datetime(df["ts"])
                     df["Tenant"] = df["slave"].map(names)
-                    st.line_chart(df.pivot_table(index="ts", columns="Tenant", values="val"))
+                    df = df.dropna(subset=["val"]).copy()
+                    if df.empty:
+                        st.info("Belum ada nilai valid untuk metrik dan periode ini.")
+                    else:
+                        labels = {"kw": "Daya (kW)", "v_a": "Tegangan A (V)",
+                                  "i_a": "Arus A (A)", "pf": "Faktor daya",
+                                  "kwh": "Total kWh"}
+                        title = labels[metric]
+                        st.caption(
+                            f"{len(df):,} sampel · Pembacaan terakhir: "
+                            f"{df['ts'].max():%d-%m-%Y %H:%M:%S} "
+                            "· Grafik menggunakan data Live tersimpan."
+                        )
+                        time_format = "%d %b %H:%M" if rentang in ("7 hari", "30 hari") else "%H:%M"
+                        base = alt.Chart(df).encode(
+                            x=alt.X("ts:T", title="Waktu pembacaan",
+                                    axis=alt.Axis(format=time_format, labelOverlap=True, tickCount=7)),
+                            y=alt.Y("val:Q", title=title, scale=alt.Scale(zero=False)),
+                            color=alt.Color("Tenant:N", title="Tenant"),
+                            tooltip=[
+                                alt.Tooltip("ts:T", title="Waktu", format="%d-%m-%Y %H:%M:%S"),
+                                alt.Tooltip("Tenant:N", title="Tenant"),
+                                alt.Tooltip("val:Q", title=title, format=",.3f"),
+                            ],
+                        )
+                        chart = (base.mark_line(strokeWidth=2, point=True)
+                                 .properties(height=390).interactive())
+                        st.altair_chart(chart, width="stretch")
+                        st.caption("Catatan: sumbu Y tidak selalu dimulai dari nol untuk memperjelas perubahan kecil. "
+                                   "Perhatikan angka pada sumbu saat membandingkan besar perubahan.")
 
     # ------------------------------------------------------------------ TAGIHAN
     with tab_bill:
@@ -159,6 +193,9 @@ def render_live():
         c1, c2 = st.columns(2)
         d1 = c1.date_input("Dari tanggal", today.replace(day=1))
         d2 = c2.date_input("Sampai tanggal", today)
+        if d1 > d2:
+            st.error("Tanggal awal tidak boleh lebih besar dari tanggal akhir.")
+            st.stop()
         start = datetime.combine(d1, time.min).strftime("%Y-%m-%d %H:%M:%S")
         end = datetime.combine(d2, time.max).strftime("%Y-%m-%d %H:%M:%S")
         st.caption(f"Tarif default: {rupiah(tarif)}/kWh · PPJ {settings['ppj_persen']}% · "
@@ -170,7 +207,20 @@ def render_live():
             show = df.copy()
             for col in ["Tarif (Rp/kWh)", "Biaya Energi", "PPJ", "Biaya Admin", "Total (Rp)"]:
                 show[col] = show[col].map(rupiah)
-            st.dataframe(show, width="stretch", hide_index=True)
+            st.caption("Estimasi berdasarkan pembacaan pertama dan terakhir yang tersedia "
+                       "dalam periode terpilih, bukan tagihan resmi satu bulan penuh. "
+                       "Geser tabel secara horizontal untuk melihat seluruh kolom.")
+            st.dataframe(
+                show, width="stretch", hide_index=True, height=360,
+                column_config={
+                    "Tenant": st.column_config.TextColumn("Tenant", width="medium"),
+                    "Lokasi": st.column_config.TextColumn("Lokasi", width="medium"),
+                    "Tarif (Rp/kWh)": st.column_config.TextColumn("Tarif (Rp/kWh)", width="medium"),
+                    "Biaya Energi": st.column_config.TextColumn("Biaya Energi", width="medium"),
+                    "Biaya Admin": st.column_config.TextColumn("Biaya Admin", width="medium"),
+                    "Total (Rp)": st.column_config.TextColumn("Total (Rp)", width="medium"),
+                },
+            )
             st.metric("Total seluruh tenant", rupiah(df["Total (Rp)"].sum()))
             b1, b2 = st.columns(2)
             b1.download_button("⬇️ CSV", df.to_csv(index=False).encode("utf-8"),
