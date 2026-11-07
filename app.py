@@ -13,6 +13,7 @@ import streamlit as st
 
 import billing
 import db
+import tariff
 
 st.set_page_config(
     page_title="Monitoring Listrik Tenant", page_icon="⚡",
@@ -180,11 +181,109 @@ def render_live():
                                 alt.Tooltip("val:Q", title=title, format=",.3f"),
                             ],
                         )
+                        point_select = alt.selection_point(
+                            name="reading_point", fields=["ts", "slave"],
+                            on="click", empty=False)
                         chart = (base.mark_line(strokeWidth=2, point=True)
-                                 .properties(height=390).interactive())
-                        st.altair_chart(chart, width="stretch")
-                        st.caption("Catatan: sumbu Y tidak selalu dimulai dari nol untuk memperjelas perubahan kecil. "
-                                   "Perhatikan angka pada sumbu saat membandingkan besar perubahan.")
+                                 .add_params(point_select)
+                                 .properties(height=390))
+                        event = st.altair_chart(
+                            chart, width="stretch", on_select="rerun",
+                            selection_mode="reading_point", key="live_phase_chart")
+                        st.caption("Klik sebuah titik grafik untuk membuka seluruh parameter meter "
+                                   "pada waktu tersebut. Gunakan daftar waktu apabila seleksi tidak tersedia. "
+                                   "Sumbu Y tidak selalu dimulai dari nol.")
+                        records = db.get_minute_details(pick, since, datetime.now().strftime("%Y-%m-%d %H:%M:%S"))
+                        if records:
+                            rows = {(r["slave"], r["ts"]): r for r in records}
+                            selected = None
+                            try:
+                                points = event.selection.get("reading_point", [])
+                                if points:
+                                    p = points[0]
+                                    pts = pd.to_datetime(p["ts"]).strftime("%Y-%m-%d %H:%M:%S")
+                                    selected = rows.get((int(p["slave"]), pts))
+                            except (KeyError, TypeError, IndexError, ValueError, AttributeError):
+                                pass
+                            options = list(rows.keys())
+                            chosen = st.selectbox(
+                                "Detail rekaman (tenant dan jam)", options,
+                                index=options.index((selected["slave"], selected["ts"])) if selected else len(options)-1,
+                                format_func=lambda v: f"{names.get(v[0], 'Slave '+str(v[0]))} · {v[1]}",
+                                key="selected_live_sample")
+                            r = rows[chosen]
+                            st.markdown("#### Detail pembacaan meter")
+                            st.caption(f"Pembacaan asli: {r['ts']} · Slave {r['slave']}. "
+                                       "Tidak ada interpolasi data pada menit yang hilang.")
+                            a, b, c, d = st.columns(4)
+                            a.metric("Daya total", f"{r['kw']:.3f} kW" if r["kw"] is not None else "—")
+                            b.metric("kWh kumulatif", f"{r['kwh']:.2f} kWh" if r["kwh"] is not None else "—")
+                            c.metric("PF total", f"{r['pf']:.3f}" if r["pf"] is not None else "—")
+                            d.metric("Tarif saat pembacaan", r["period"] or "Belum dicatat")
+                            phase_data = []
+                            for phase, label in (("a", "R / L1"), ("b", "S / L2"), ("c", "T / L3")):
+                                current = r["i_" + phase]
+                                voltage = r["v_" + phase]
+                                phase_data.append({
+                                    "Fase": label,
+                                    "Tegangan ke netral (V)": voltage,
+                                    "Arus (A)": current,
+                                    "Status arus": tariff.describe_amps(current, float(settings.get("current_alert_a", 100))),
+                                })
+                            st.dataframe(pd.DataFrame(phase_data), hide_index=True, width="stretch")
+                            amps = [r["i_a"], r["i_b"], r["i_c"]]
+                            if all(v is not None for v in amps):
+                                top = max(amps)
+                                low = min(amps)
+                                st.caption(f"Perbandingan arus fase: tertinggi {top:.2f} A, "
+                                           f"terendah {low:.2f} A, selisih {top-low:.2f} A. "
+                                           "Ini merupakan arus terukur, bukan nilai primer CT yang belum diverifikasi.")
+                                if top >= float(settings.get("current_alert_a", 100)):
+                                    st.warning("Arus mencapai ambang pemantauan. Periksa CT, "
+                                               "kapasitas, kontrak, dan beban bersama teknisi.")
+                            # Bandingkan hanya dengan pembacaan sebelumnya dari slave sama.
+                            previous = [item for item in records
+                                        if item["slave"] == r["slave"] and item["ts"] < r["ts"]]
+                            if previous:
+                                prev = previous[-1]
+                                st.markdown("##### Analisis perubahan dari pembacaan sebelumnya")
+                                st.caption(f"Pembanding: {prev['ts']} → {r['ts']}")
+                                for phase, label in (("a", "R / L1"), ("b", "S / L2"), ("c", "T / L3")):
+                                    old_a, new_a = prev["i_" + phase], r["i_" + phase]
+                                    if old_a is not None and new_a is not None:
+                                        change = new_a - old_a
+                                        pct = (change / old_a * 100) if old_a > 0 else None
+                                        msg = f"{label}: {old_a:.2f} → {new_a:.2f} A ({change:+.2f} A)"
+                                        if pct is not None:
+                                            msg += f" / {pct:+.1f}%"
+                                        st.write(msg)
+                                        if (pct is not None and pct >= 30 and change >= 1) or (
+                                                old_a == 0 and new_a >= float(settings.get("current_alert_a", 100))):
+                                            st.warning(f"Terindikasi lonjakan arus {label} dibanding sampel sebelumnya. "
+                                                       "Periksa beban serta interval pencatatan; bukan diagnosis gangguan.")
+                                if prev["kw"] is not None and r["kw"] is not None:
+                                    st.write(f"Daya total: {prev['kw']:.3f} → {r['kw']:.3f} kW")
+                            else:
+                                st.caption("Belum ada rekaman pembanding sebelumnya pada rentang ini.")
+                            if r["rate"] is not None:
+                                st.write(f"Tarif snapshot: Rp {r['rate']:,.2f}/kWh · "
+                                         f"kWh antar sampel: {r['delta_kwh'] if r['delta_kwh'] is not None else 'tidak tersedia'} · "
+                                         f"Estimasi energi: {rupiah(r['estimated_energy_cost'])}")
+                                st.caption(r["note"] or "")
+                            else:
+                                st.info("Rekaman lama belum memiliki snapshot tarif. "
+                                        "Tidak diklaim sebagai tarif historis.")
+                            st.caption("Tegangan R/S/T tetap ditampilkan walaupun arus atau beban nol. "
+                                       "R–S, S–T, T–R dan tegangan terhadap bumi tidak dihitung dari "
+                                       "tiga nilai tegangan fase-ke-netral; dibutuhkan register/alat terverifikasi.")
+                            with st.expander("Semua rekaman per waktu (CSV)"):
+                                detail_df = pd.DataFrame(records)
+                                st.dataframe(detail_df, width="stretch", hide_index=True)
+                                st.download_button(
+                                    "Unduh data per pembacaan (CSV)",
+                                    detail_df.to_csv(index=False).encode("utf-8-sig"),
+                                    "detail_meter_live.csv", "text/csv", key="download_minute_csv")
+
 
     # ------------------------------------------------------------------ TAGIHAN
     with tab_bill:
@@ -238,6 +337,32 @@ def render_live():
         new_ppj = c2.number_input("PPJ (%)", value=float(settings["ppj_persen"]), step=0.5)
         new_admin = c3.number_input("Biaya admin / tenant (Rp)", value=float(settings["biaya_admin"]), step=1000.0)
 
+        st.subheader("Klasifikasi WBP / LWBP")
+        st.caption("Periode contoh sesuai kebutuhan operasional: WBP 17:00–22:00 WIB, "
+                   "LWBP 22:00–17:00 WIB. Pastikan waktu laptop, zona waktu, "
+                   "golongan pelanggan, dan kontrak PLN sebelum aktivasi tarif.")
+        tou = st.checkbox("Aktifkan pengali tarif WBP pada rekaman baru",
+                          value=settings.get("tou_enabled", "False").lower() == "true")
+        t1, t2, t3 = st.columns(3)
+        wbp_start = t1.text_input("WBP mulai (HH:MM)", settings.get("wbp_start", "17:00"))
+        wbp_end = t2.text_input("WBP selesai (HH:MM)", settings.get("wbp_end", "22:00"))
+        wbp_mult = t3.number_input("Pengali tarif WBP", min_value=1.0,
+                                   value=float(settings.get("wbp_multiplier", 1)), step=0.1)
+        current_alert = st.number_input("Ambang pemantauan arus per fase (A)",
+                                         min_value=1.0,
+                                         value=float(settings.get("current_alert_a", 100)),
+                                         step=5.0)
+        st.caption("Ambang 100 A hanya untuk peringatan, bukan aturan otomatis tarif ganda. "
+                   "CT ratio dan model meter (ADL200/ADL400/ADL400-D) harus diverifikasi.")
+        try:
+            from datetime import time as _time
+            _time.fromisoformat(wbp_start)
+            _time.fromisoformat(wbp_end)
+            valid_hours = True
+        except ValueError:
+            valid_hours = False
+            st.error("Format jam harus HH:MM, misalnya 17:00.")
+
         st.subheader("Koneksi ke meter")
         st.caption("RS485-USB / Modbus TCP menggunakan collector lokal; ESP32 Wi-Fi memakai penerima HTTP di laptop.")
         connection_types = ["serial", "tcp", "esp32"]
@@ -285,11 +410,14 @@ def render_live():
                                        help="Untuk ESP32, interval pengiriman diatur juga pada firmware. "
                                             "Nilai ini digunakan dashboard untuk status online/offline.")
 
-        if st.button("💾 Simpan pengaturan", type="primary"):
+        if st.button("💾 Simpan pengaturan", type="primary", disabled=not valid_hours):
             db.save_settings({"tarif": new_tarif, "ppj_persen": new_ppj, "biaya_admin": new_admin,
                               "conn_type": conn, "serial_port": serial_port, "baud": baud,
                               "parity": parity, "host": host, "tcp_port": int(tcp_port),
-                              "interval": int(new_interval)})
+                              "interval": int(new_interval),
+                              "tou_enabled": str(tou), "wbp_start": wbp_start,
+                              "wbp_end": wbp_end, "wbp_multiplier": wbp_mult,
+                              "current_alert_a": current_alert})
             st.success("Tersimpan.")
             st.rerun()
 
