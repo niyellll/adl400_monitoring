@@ -184,13 +184,16 @@ def render():
                 ])
             selection = alt.selection_point(name="demo_point", fields=["ts", "slave"],
                                             on="click", empty=False)
-            chart = (base.mark_line(strokeWidth=1.7) +
-                     base.mark_circle(size=45).add_params(selection)).properties(height=390)
+            # Garis saja yang terlihat. Marker sangat transparan tetap menjadi
+            # target hover/click di setiap rekaman per menit.
+            line = base.mark_line(strokeWidth=1.8)
+            hitboxes = base.mark_circle(size=95, opacity=0.001).add_params(selection)
+            chart = (line + hitboxes).properties(height=390)
             event = st.altair_chart(chart, width="stretch", on_select="rerun",
                                     selection_mode="demo_point", key="demo_point_chart")
             st.caption("Arahkan kursor ke titik untuk melihat detail lengkap langsung pada grafik: "
                        "daya, energi, R/S/T, arus, PF, tarif, dan perubahan dari menit sebelumnya. "
-                       "Klik titik untuk memilih rekaman pada panel detail di bawah grafik. "
+                       "Klik posisi pada garis untuk memilih rekaman dan melihat keterangan lengkap di bawah grafik. "
                        "Seluruh angka adalah SIMULASI.")
             lookup = history.set_index(["slave", "ts"]).sort_index()
             choices = list(lookup.index)
