@@ -108,7 +108,9 @@ def render():
         total_used = float(consumption.sum())
         a, b, c = st.columns(3)
         a.metric("Total beban saat ini", f"{total_kw:,.2f} kW")
-        b.metric("Estimasi biaya hari ini", money(total_used * st.session_state.demo_rate))
+        b.metric("Biaya dasar hari ini (tanpa WBP)", money(total_used * st.session_state.demo_rate))
+        st.caption("Biaya dasar pada ringkasan bukan tagihan WBP/LWBP. "
+                   "Lihat tab Tagihan untuk pemisahan per tenant dan status alokasi.")
         c.metric("Meter simulasi", f"{len(DEMO_METERS)} / {len(DEMO_METERS)}")
         st.caption(f"Pembacaan contoh terakhir: {now:%d-%m-%Y %H:%M} · diperbarui tiap menit")
         st.divider()
@@ -118,12 +120,14 @@ def render():
             used = float(consumption.get(slave, 0))
             with cols[idx % 2].container(border=True):
                 st.markdown(f"**{tenant}** · 🔵 simulasi")
-                st.caption(f"Slave {slave} · {lokasi}")
+                st.caption(f"Slave {slave} · {lokasi} · "
+                           f"{'Double Tarif' if st.session_state.demo_modes.get(slave) == 'double' else 'Tarif Tunggal'}")
                 left, right = st.columns(2)
                 left.metric("Daya", f"{r['kw']:.2f} kW")
                 right.metric("Total kWh", f"{r['kwh']:,.2f}")
                 left.metric("Hari ini", f"{used:,.2f} kWh")
-                right.metric("Biaya hari ini", money(used * st.session_state.demo_rate))
+                right.metric("Biaya dasar hari ini (tanpa WBP)",
+                             money(used * st.session_state.demo_rate))
                 st.caption(f"V R/S/T: {r['v_a']:.1f} / {r['v_b']:.1f} / {r['v_c']:.1f} V")
                 st.caption(f"I L1/L2/L3: {r['i_a']:.2f} / {r['i_b']:.2f} / {r['i_c']:.2f} A · "
                            f"PF {r['pf']:.3f}")
@@ -152,11 +156,12 @@ def render():
                        f"Terakhir: {now:%d-%m-%Y %H:%M}")
             source = history.copy()
             source["val"] = source[metric]
+            is_double = source["slave"].map(st.session_state.demo_modes) == "double"
+            in_wbp = (source["ts"].dt.hour >= 17) & (source["ts"].dt.hour < 22)
             source["Periode tarif"] = np.where(
-                (source["ts"].dt.hour >= 17) & (source["ts"].dt.hour < 22),
-                "WBP", "LWBP")
+                ~is_double, "TUNGGAL", np.where(in_wbp, "WBP", "LWBP"))
             source["Tarif contoh (Rp/kWh)"] = np.where(
-                source["Periode tarif"] == "WBP",
+                is_double & in_wbp,
                 st.session_state.demo_rate * st.session_state.demo_wbp_factor,
                 st.session_state.demo_rate)
             source.sort_values(["slave", "ts"], inplace=True)
@@ -227,7 +232,9 @@ def render():
             k1.metric("Daya total", f"{reading['kw']:.3f} kW")
             k2.metric("Energi total", f"{reading['kwh']:.3f} kWh")
             k3.metric("PF total", f"{reading['pf']:.3f}")
-            category, rate = tariff.rate_for(key[1].strftime("%Y-%m-%d %H:%M:%S"), tariff_settings)
+            category, rate = tariff.rate_for(
+                key[1].strftime("%Y-%m-%d %H:%M:%S"), tariff_settings,
+                mode=st.session_state.demo_modes.get(key[0], "single"))
             k4.metric("Periode", category)
             st.dataframe(pd.DataFrame([
                 {"Fase": label, "Tegangan ke netral (V)": reading["v_" + ph],
