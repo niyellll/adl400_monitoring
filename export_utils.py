@@ -34,7 +34,7 @@ def formatted_xlsx(frame, sheet_name="Data Monitoring"):
         for col_num, column in enumerate(clean.columns, 1):
             letter = get_column_letter(col_num)
             values = clean[column].head(250).astype(str)
-            max_len = max([len(str(column)), *(len(v) for v in values)] or [10])
+            max_len = max([len(str(column)), *(len(str(v)) for v in values)] or [10])
             ws.column_dimensions[letter].width = min(34, max(15, max_len + 3))
             cell = ws.cell(1, col_num)
             cell.font = Font(name="Calibri", size=11, bold=True, color="FFFFFF")
