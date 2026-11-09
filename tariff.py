@@ -25,9 +25,9 @@ def classify(ts, settings):
 
 def rate_for(ts, settings, override=None, mode=None):
     base = float(override if override is not None else settings.get("tarif", "1444.70"))
-    if effective_mode(mode, settings) == "single":
-        return "TUNGGAL", base
     period = classify(ts, settings)
+    if effective_mode(mode, settings) == "single":
+        return period, base
     factor = float(settings.get("wbp_multiplier", "1")) if period == "WBP" else 1.0
     return period, base * factor
 
