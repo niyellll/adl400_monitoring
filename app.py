@@ -13,6 +13,7 @@ import streamlit as st
 
 import billing
 import db
+import demo_dashboard
 import tariff
 
 st.set_page_config(
@@ -864,6 +865,6 @@ def render_demo():
 
 
 if pilihan_mode.startswith("Demo"):
-    render_demo()
+    demo_dashboard.render()
 else:
     render_live()
