@@ -351,15 +351,15 @@ def render_live():
             for col in ["Tarif (Rp/kWh)", "Biaya LWBP", "Biaya WBP",
                         "Biaya Energi", "PPJ", "Biaya Admin", "Total (Rp)"]:
                 show[col] = show[col].map(rupiah)
-            st.caption("Saat tarif ganda aktif, biaya dihitung dari snapshot WBP/LWBP "
+            st.caption("Setiap tenant mengikuti jenis tarif yang dipilih. Saat tarif ganda aktif, "
+                       "biaya dihitung dari snapshot WBP/LWBP "
                        "yang valid. Interval yang hilang, melewati batas tarif, atau "
                        "rekaman sebelum aktivasi tidak diperkirakan secara otomatis. "
                        "Baris dengan alokasi tidak lengkap tidak memiliki total tagihan.")
-            if settings.get("tou_enabled", "False").lower() == "true":
-                invalid = df["Total (Rp)"].isna().sum()
-                if invalid:
-                    st.warning(f"{invalid} meter belum memiliki total tagihan lengkap; "
-                               "periksa kolom kWh Belum Teralokasi dan Catatan.")
+            invalid = df["Total (Rp)"].isna().sum()
+            if invalid:
+                st.warning(f"{invalid} meter belum memiliki total tagihan lengkap; "
+                           "periksa jenis tarif, kWh belum teralokasi, dan catatan.")
             st.dataframe(
                 show, width="stretch", hide_index=True, height=360,
                 column_config={
@@ -377,12 +377,16 @@ def render_live():
             if len(valid_total) != len(df):
                 st.caption(f"Hanya {len(valid_total)} dari {len(df)} meter memiliki "
                            "estimasi tagihan lengkap. Nilai ini bukan total seluruh tenant.")
-            st.subheader("Rincian WBP / LWBP per pembacaan")
+            st.subheader("Rincian tarif per pembacaan")
             with db.connect() as con:
                 from pandas import read_sql_query
                 source = "esp32" if settings.get("conn_type") == "esp32" else "serial"
                 per_minute = read_sql_query(
-                    """SELECT t.ts AS Waktu, t.slave AS Slave, t.period AS Periode,
+                    """SELECT t.ts AS Waktu, t.slave AS Slave,
+                               CASE WHEN t.mode='single' THEN 'Tarif Tunggal'
+                                    WHEN t.mode='double' THEN 'Double Tarif'
+                                    ELSE 'Legacy (belum diketahui)' END AS 'Jenis Tarif',
+                               t.period AS Periode,
                               t.rate AS 'Tarif (Rp/kWh)',
                               t.delta_kwh AS 'Pemakaian (kWh)',
                               t.estimated_energy_cost AS 'Estimasi energi (Rp)',
@@ -436,12 +440,14 @@ def render_live():
         st.caption("Periode contoh sesuai kebutuhan operasional: WBP 17:00–22:00 WIB, "
                    "LWBP 22:00–17:00 WIB. Pastikan waktu laptop, zona waktu, "
                    "golongan pelanggan, dan kontrak PLN sebelum aktivasi tarif.")
-        tou = st.checkbox("Aktifkan pengali tarif WBP pada rekaman baru",
+        st.caption("Centang ini untuk default tenant yang memilih Ikuti Global. "
+                   "Tenant dengan jenis tarif khusus tetap mengikuti pilihannya masing-masing.")
+        tou = st.checkbox("Default global: aktifkan WBP/LWBP untuk tenant Ikuti Global",
                           value=settings.get("tou_enabled", "False").lower() == "true")
         t1, t2, t3 = st.columns(3)
         wbp_start = t1.text_input("WBP mulai (HH:MM)", settings.get("wbp_start", "17:00"))
         wbp_end = t2.text_input("WBP selesai (HH:MM)", settings.get("wbp_end", "22:00"))
-        wbp_mult = t3.number_input("Pengali tarif WBP", min_value=1.0,
+        wbp_mult = t3.number_input("Pengali tarif WBP (1,50× = kenaikan 50%)", min_value=1.0,
                                    value=float(settings.get("wbp_multiplier", 1)), step=0.1)
         current_alert = st.number_input("Ambang pemantauan arus per fase (A)",
                                          min_value=1.0,
@@ -517,26 +523,48 @@ def render_live():
             st.rerun()
 
         st.subheader("Daftar meter / tenant")
-        st.caption("Slave = alamat Modbus di meter. Tarif override boleh dikosongkan (pakai tarif default).")
+        st.caption("Slave = alamat Modbus. Pilih tarif tiap tenant; 'Ikuti Global' "
+                   "mempertahankan konfigurasi lama. Tarif override boleh dikosongkan.")
+        mode_labels = {"single": "Tarif Tunggal", "double": "Double Tarif"}
+        label_modes = {"Ikuti Global": None, "Tarif Tunggal": "single",
+                       "Double Tarif": "double"}
         mdf = pd.DataFrame(meters) if meters else pd.DataFrame(
             {"slave": pd.Series(dtype=int), "tenant": pd.Series(dtype=str),
              "lokasi": pd.Series(dtype=str), "tarif_override": pd.Series(dtype=float),
-             "aktif": pd.Series(dtype=bool)})
+             "aktif": pd.Series(dtype=bool), "tariff_mode": pd.Series(dtype=str)})
         mdf["aktif"] = mdf["aktif"].astype(bool)
-        edited = st.data_editor(mdf, num_rows="dynamic", width="stretch", hide_index=True,
-                                column_config={"slave": st.column_config.NumberColumn("Slave", min_value=1, max_value=247, step=1, required=True),
-                                               "tenant": st.column_config.TextColumn("Tenant", required=True),
-                                               "lokasi": "Lokasi",
-                                               "tarif_override": st.column_config.NumberColumn("Tarif override (Rp/kWh)"),
-                                               "aktif": st.column_config.CheckboxColumn("Aktif")})
+        mdf["tariff_mode"] = mdf["tariff_mode"].map(
+            lambda m: mode_labels.get(m, "Ikuti Global"))
+        edited = st.data_editor(
+            mdf, num_rows="dynamic", width="stretch", hide_index=True,
+            column_config={
+                "slave": st.column_config.NumberColumn(
+                    "Slave", min_value=1, max_value=247, step=1, required=True),
+                "tenant": st.column_config.TextColumn("Tenant", required=True),
+                "lokasi": "Lokasi",
+                "tarif_override": st.column_config.NumberColumn("Tarif override (Rp/kWh)"),
+                "tariff_mode": st.column_config.SelectboxColumn(
+                    "Jenis Tarif", options=list(label_modes), required=True,
+                    help="Tunggal: tarif sama sepanjang hari. Double: WBP/LWBP sesuai jam."),
+                "aktif": st.column_config.CheckboxColumn("Aktif"),
+            })
         if st.button("💾 Simpan daftar meter"):
-            rows = [r for r in edited.to_dict("records") if pd.notna(r.get("slave")) and r.get("tenant")]
-            for r in rows:
-                if pd.isna(r.get("tarif_override")):
-                    r["tarif_override"] = None
-            db.replace_meters(rows)
-            st.success("Daftar meter tersimpan.")
-            st.rerun()
+            rows = [r for r in edited.to_dict("records")
+                    if pd.notna(r.get("slave")) and r.get("tenant")]
+            if len({int(r["slave"]) for r in rows}) != len(rows):
+                st.error("Nomor slave meter tidak boleh duplikat.")
+            elif any(pd.notna(r.get("tariff_mode")) and
+                     r["tariff_mode"] not in label_modes for r in rows):
+                st.error("Jenis tarif tenant tidak valid.")
+            else:
+                for r in rows:
+                    if pd.isna(r.get("tarif_override")):
+                        r["tarif_override"] = None
+                    r["tariff_mode"] = label_modes.get(r.get("tariff_mode"))
+                db.replace_meters(rows)
+                st.success("Daftar meter tersimpan. Berlaku untuk pembacaan baru; "
+                           "riwayat lama tidak dihitung ulang otomatis.")
+                st.rerun()
 
 
 
