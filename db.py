@@ -135,7 +135,7 @@ def _snapshot_tariff(con, slave, ts, kwh, source):
             note = "kWh menurun; periksa reset atau pergantian meter"
         elif elapsed > max(120, float(settings.get("interval", 60)) * 2.5):
             note = "Jeda panjang; alokasi periode tidak pasti"
-        elif mode == "double" and tariff.classify(prev["ts"], settings) != period:
+        elif tariff.classify(prev["ts"], settings) != period:
             note = "Melewati batas WBP/LWBP; alokasi tidak pasti"
         else:
             delta, cost, note = diff, diff * rate, "Estimasi dari dua pembacaan"
