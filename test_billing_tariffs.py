@@ -143,7 +143,7 @@ class BillingTariffTests(unittest.TestCase):
         book = load_workbook(BytesIO(formatted_xlsx(frame, "Tagihan")))
         headers = [cell.value for cell in book["Tagihan"][1]]
         for name in ("Jenis Tarif", "kWh LWBP", "kWh WBP", "Biaya LWBP",
-                     "Biaya WBP", "Total (Rp)", "Catatan"):
+                     "Biaya WBP", "Total (Rp)", "Status Alokasi", "Catatan"):
             self.assertIn(name, headers)
 
     def test_esp32_real_tenant_mode_snapshots(self):
