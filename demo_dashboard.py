@@ -144,7 +144,8 @@ def render():
                            (data["ts"] >= now - pd.Timedelta(hours=hours))].copy()
             st.caption(f"{len(history):,} sampel simulasi · Resolusi 1 menit · "
                        f"Terakhir: {now:%d-%m-%Y %H:%M}")
-            source = history.rename(columns={metric: "val"}).copy()
+            source = history.copy()
+            source["val"] = source[metric]
             source["Periode tarif"] = np.where(
                 (source["ts"].dt.hour >= 17) & (source["ts"].dt.hour < 22),
                 "WBP", "LWBP")
