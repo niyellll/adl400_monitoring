@@ -174,15 +174,38 @@ def render_live():
                             "· Grafik menggunakan data Live tersimpan."
                         )
                         time_format = "%d %b %H:%M" if rentang in ("7 hari", "30 hari") else "%H:%M"
+                        # Tooltip memakai rekaman lengkap (bukan hanya nilai metrik grafik).
+                        # Data yang tidak terekam tetap kosong, tidak direkayasa.
+                        record_rows = db.get_minute_details(
+                            pick, since, datetime.now().strftime("%Y-%m-%d %H:%M:%S"))
+                        detail_cols = ["ts", "slave", "kw", "kwh", "pf",
+                                       "v_a", "v_b", "v_c", "i_a", "i_b", "i_c",
+                                       "period", "rate", "delta_kwh", "estimated_energy_cost"]
+                        full_df = pd.DataFrame(record_rows)
+                        if not full_df.empty:
+                            full_df["ts"] = pd.to_datetime(full_df["ts"])
+                            df = df.merge(full_df[detail_cols], on=["ts", "slave"], how="left")
                         base = alt.Chart(df).encode(
                             x=alt.X("ts:T", title="Waktu pembacaan",
                                     axis=alt.Axis(format=time_format, labelOverlap=True, tickCount=7)),
                             y=alt.Y("val:Q", title=title, scale=alt.Scale(zero=False)),
                             color=alt.Color("Tenant:N", title="Tenant"),
                             tooltip=[
-                                alt.Tooltip("ts:T", title="Waktu", format="%d-%m-%Y %H:%M:%S"),
+                                alt.Tooltip("ts:T", title="Waktu pembacaan", format="%d-%m-%Y %H:%M:%S"),
                                 alt.Tooltip("Tenant:N", title="Tenant"),
-                                alt.Tooltip("val:Q", title=title, format=",.3f"),
+                                alt.Tooltip("kw:Q", title="Daya total (kW)", format=",.3f"),
+                                alt.Tooltip("kwh:Q", title="Energi kumulatif (kWh)", format=",.3f"),
+                                alt.Tooltip("v_a:Q", title="Tegangan R/L1 (V)", format=",.1f"),
+                                alt.Tooltip("v_b:Q", title="Tegangan S/L2 (V)", format=",.1f"),
+                                alt.Tooltip("v_c:Q", title="Tegangan T/L3 (V)", format=",.1f"),
+                                alt.Tooltip("i_a:Q", title="Arus R/L1 (A)", format=",.2f"),
+                                alt.Tooltip("i_b:Q", title="Arus S/L2 (A)", format=",.2f"),
+                                alt.Tooltip("i_c:Q", title="Arus T/L3 (A)", format=",.2f"),
+                                alt.Tooltip("pf:Q", title="Faktor daya", format=".3f"),
+                                alt.Tooltip("period:N", title="Periode tarif tersimpan"),
+                                alt.Tooltip("rate:Q", title="Tarif snapshot (Rp/kWh)", format=",.2f"),
+                                alt.Tooltip("delta_kwh:Q", title="Pemakaian sejak sampel sebelumnya (kWh)", format=",.4f"),
+                                alt.Tooltip("estimated_energy_cost:Q", title="Biaya energi interval (Rp)", format=",.2f"),
                             ],
                         )
                         point_select = alt.selection_point(
@@ -194,10 +217,11 @@ def render_live():
                         event = st.altair_chart(
                             chart, width="stretch", on_select="rerun",
                             selection_mode="reading_point", key="live_phase_chart")
-                        st.caption("Klik sebuah titik grafik untuk membuka seluruh parameter meter "
-                                   "pada waktu tersebut. Gunakan daftar waktu apabila seleksi tidak tersedia. "
+                        st.caption("Arahkan kursor ke titik untuk melihat semua metrik langsung pada grafik. "
+                                   "Klik titik untuk memilih pembacaan pada panel di bawah. "
+                                   "Tarif historis yang tidak tercatat tetap ditandai kosong. "
                                    "Sumbu Y tidak selalu dimulai dari nol.")
-                        records = db.get_minute_details(pick, since, datetime.now().strftime("%Y-%m-%d %H:%M:%S"))
+                        records = record_rows
                         if records:
                             rows = {(r["slave"], r["ts"]): r for r in records}
                             selected = None
