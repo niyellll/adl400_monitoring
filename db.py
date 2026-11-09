@@ -135,10 +135,17 @@ def _snapshot_tariff(con, slave, ts, kwh, source):
             note = "kWh menurun; periksa reset atau pergantian meter"
         elif elapsed > max(120, float(settings.get("interval", 60)) * 2.5):
             note = "Jeda panjang; alokasi periode tidak pasti"
-        elif tariff.classify(prev["ts"], settings) != period:
-            note = "Melewati batas WBP/LWBP; alokasi tidak pasti"
         else:
-            delta, cost, note = diff, diff * rate, "Estimasi dari dua pembacaan"
+            interval_class = tariff.interval_period(prev["ts"], ts, settings)
+            if interval_class is None and mode == "double":
+                note = "Interval melintasi batas WBP/LWBP tanpa bacaan tepat di batas; alokasi tidak pasti"
+            else:
+                # A reading exactly at a boundary represents consumption in
+                # the preceding half-open interval; use its previous tariff.
+                period = interval_class or period
+                _, rate = tariff.rate_for(prev["ts"], settings, override, mode=mode)
+                delta, cost = diff, diff * rate
+                note = "Teralokasi ke interval sebelum timestamp akhir (batas jam tepat)"
     con.execute(
         """INSERT OR REPLACE INTO reading_tariffs
            (slave,ts,source,period,rate,delta_kwh,estimated_energy_cost,note,mode)
