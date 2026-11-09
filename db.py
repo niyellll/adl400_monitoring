@@ -3,6 +3,8 @@ import os
 import sqlite3
 from datetime import datetime
 
+import tariff
+
 DB_PATH = os.environ.get("ADL400_DB", "monitoring.db")
 
 DEFAULT_SETTINGS = {
@@ -15,7 +17,12 @@ DEFAULT_SETTINGS = {
     "interval": "60",           # detik antar pembacaan
     "tarif": "1444.70",         # Rp per kWh
     "ppj_persen": "0",          # pajak penerangan jalan (%)
-    "biaya_admin": "0",         # Rp per tenant per bulan
+    "biaya_admin": "0",
+    "tou_enabled": "False",
+    "wbp_start": "17:00",
+    "wbp_end": "22:00",
+    "wbp_multiplier": "1",
+    "current_alert_a": "100",         # Rp per tenant per bulan
 }
 
 
@@ -51,6 +58,15 @@ def init():
         );
         CREATE INDEX IF NOT EXISTS idx_esp32_real_readings
             ON esp32_real_readings (slave, ts);
+        CREATE TABLE IF NOT EXISTS reading_tariffs (
+            slave INTEGER NOT NULL, ts TEXT NOT NULL, source TEXT NOT NULL,
+            period TEXT NOT NULL, rate REAL NOT NULL,
+            delta_kwh REAL, estimated_energy_cost REAL,
+            note TEXT NOT NULL DEFAULT '',
+            PRIMARY KEY(slave, ts, source)
+        );
+        CREATE INDEX IF NOT EXISTS idx_reading_tariffs_ts
+            ON reading_tariffs (ts, source);
         """)
         for k, v in DEFAULT_SETTINGS.items():
             con.execute("INSERT OR IGNORE INTO settings VALUES (?, ?)", (k, v))
@@ -89,6 +105,36 @@ def active_readings_table():
     return "esp32_real_readings" if get_settings().get("conn_type") == "esp32" else "readings"
 
 
+def _snapshot_tariff(con, slave, ts, kwh, source):
+    """Store per-sample tariff using the contract settings at collection time."""
+    settings = get_settings()
+    meter = con.execute("SELECT tarif_override FROM meters WHERE slave=?", (slave,)).fetchone()
+    override = meter["tarif_override"] if meter and meter["tarif_override"] is not None else None
+    period, rate = tariff.rate_for(ts, settings, override)
+    table = "esp32_real_readings" if source == "esp32" else "readings"
+    prev = con.execute(
+        f"SELECT ts,kwh FROM {table} WHERE slave=? AND ts<? ORDER BY ts DESC LIMIT 1",
+        (slave, ts)).fetchone()
+    delta, cost, note = None, None, "Pembacaan awal; tidak ada selisih"
+    if prev and prev["kwh"] is not None and kwh is not None:
+        elapsed = (datetime.strptime(ts, "%Y-%m-%d %H:%M:%S") -
+                   datetime.strptime(prev["ts"], "%Y-%m-%d %H:%M:%S")).total_seconds()
+        diff = float(kwh) - float(prev["kwh"])
+        if diff < 0:
+            note = "kWh menurun; periksa reset atau pergantian meter"
+        elif elapsed > max(120, float(settings.get("interval", 60)) * 2.5):
+            note = "Jeda panjang; alokasi periode tidak pasti"
+        elif tariff.classify(prev["ts"], settings) != period:
+            note = "Melewati batas WBP/LWBP; alokasi tidak pasti"
+        else:
+            delta, cost, note = diff, diff * rate, "Estimasi dari dua pembacaan"
+    con.execute(
+        """INSERT OR REPLACE INTO reading_tariffs
+           (slave,ts,source,period,rate,delta_kwh,estimated_energy_cost,note)
+           VALUES (?,?,?,?,?,?,?,?)""",
+        (slave, ts, source, period, rate, delta, cost, note))
+
+
 def insert_esp32_real_reading(slave, data, ts=None):
     ts = ts or datetime.now().strftime("%Y-%m-%d %H:%M:%S")
     with connect() as con:
@@ -96,6 +142,7 @@ def insert_esp32_real_reading(slave, data, ts=None):
             "INSERT INTO esp32_real_readings VALUES (?,?,?,?,?,?,?,?,?,?,?)",
             (ts, slave, data["kwh"], data.get("v_a"), data.get("v_b"), data.get("v_c"),
              data.get("i_a"), data.get("i_b"), data.get("i_c"), data.get("kw"), data.get("pf")))
+        _snapshot_tariff(con, slave, ts, data["kwh"], "esp32")
 
 
 def insert_reading(slave, data, ts=None):
@@ -105,6 +152,28 @@ def insert_reading(slave, data, ts=None):
             "INSERT INTO readings VALUES (?,?,?,?,?,?,?,?,?,?,?)",
             (ts, slave, data["kwh"], data["v_a"], data["v_b"], data["v_c"],
              data["i_a"], data["i_b"], data["i_c"], data["kw"], data["pf"]))
+        _snapshot_tariff(con, slave, ts, data["kwh"], "serial")
+
+
+def get_minute_details(slaves, start_ts, end_ts):
+    """Return stored samples; never invent missing minute readings."""
+    if not slaves:
+        return []
+    source = "esp32" if get_settings().get("conn_type") == "esp32" else "serial"
+    table = active_readings_table()
+    marks = ",".join("?" * len(slaves))
+    with connect() as con:
+        result = con.execute(
+            f"""SELECT r.*, t.period, t.rate, t.delta_kwh,
+                       t.estimated_energy_cost, t.note
+                FROM {table} r
+                LEFT JOIN reading_tariffs t
+                  ON t.slave=r.slave AND t.ts=r.ts AND t.source=?
+                WHERE r.ts>=? AND r.ts<=? AND r.slave IN ({marks})
+                ORDER BY r.ts, r.slave""",
+            [source, start_ts, end_ts, *slaves],
+        ).fetchall()
+    return [dict(r) for r in result]
 
 
 def last_reading(slave):

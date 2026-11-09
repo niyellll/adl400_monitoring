@@ -1,0 +1,58 @@
+name: Validate monitoring dashboard
+
+on:
+  push:
+    branches:
+      - main
+      - feature/minute-phase-tou-drilldown-20261107
+  pull_request:
+    branches:
+      - main
+      - fix/live-dashboard-layout-charts-registers-20261107
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -r requirements.txt pyserial
+      - name: Check Python syntax
+        run: python -m compileall -q app.py db.py collector.py modbus.py billing.py tariff.py esp32_receiver.py
+      - name: Check WBP/LWBP and local SQLite integration
+        run: python -m unittest -v test_tariff test_db_tariff
+      - name: Smoke test demo interface
+        run: |
+          python - <<'PY'
+          import os
+          import tempfile
+          from streamlit.testing.v1 import AppTest
+          with tempfile.TemporaryDirectory() as folder:
+              os.environ["ADL400_DB"] = os.path.join(folder, "monitoring_ci.db")
+              import db
+              db.DB_PATH = os.environ["ADL400_DB"]
+              db.init()
+              db.replace_meters([{"slave": 31, "tenant": "Testing", "lokasi": "CI",
+                                  "tarif_override": None, "aktif": True}])
+              def data(kwh):
+                  return {"kwh": kwh, "v_a": 230, "v_b": 229, "v_c": 231,
+                          "i_a": 4.5, "i_b": 4.1, "i_c": 4.3,
+                          "kw": 2.7, "pf": 0.9}
+              from datetime import datetime, timedelta
+              now = datetime.now().replace(microsecond=0)
+              db.insert_reading(31, data(20), (now-timedelta(minutes=2)).strftime("%Y-%m-%d %H:%M:%S"))
+              db.insert_reading(31, data(20.03), (now-timedelta(minutes=1)).strftime("%Y-%m-%d %H:%M:%S"))
+              at = AppTest.from_file("app.py", default_timeout=60).run()
+              if at.exception:
+                  raise AssertionError([str(err.message) for err in at.exception])
+              at.sidebar.radio[0].set_value("Live · meter asli").run()
+              if at.exception:
+                  raise AssertionError([str(err.message) for err in at.exception])
+              print("Streamlit Demo and Live loaded without uncaught exception")
+          PY
