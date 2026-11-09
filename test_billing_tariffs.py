@@ -36,10 +36,10 @@ class BillingTariffTests(unittest.TestCase):
         self.insert("2026-11-09 17:00:00", 13)  # transition deliberately not allocated
         self.insert("2026-11-09 17:01:00", 14)
         result = billing.compute("2026-11-09 16:57:00", "2026-11-09 17:01:00").iloc[0]
-        self.assertEqual(result["kWh LWBP"], 2)
+        self.assertEqual(result["kWh LWBP"], 3)
         self.assertEqual(result["kWh WBP"], 1)
-        self.assertEqual(result["kWh Belum Teralokasi"], 1)
-        self.assertTrue(result["Total (Rp)"] is None)
+        self.assertEqual(result["kWh Belum Teralokasi"], 0)
+        self.assertEqual(result["Total (Rp)"], 4500)
 
     def test_single_period_complete(self):
         self.insert("2026-11-09 17:01:00", 10)
@@ -143,7 +143,7 @@ class BillingTariffTests(unittest.TestCase):
         book = load_workbook(BytesIO(formatted_xlsx(frame, "Tagihan")))
         headers = [cell.value for cell in book["Tagihan"][1]]
         for name in ("Jenis Tarif", "kWh LWBP", "kWh WBP", "Biaya LWBP",
-                     "Biaya WBP", "Total (Rp)", "Catatan"):
+                     "Biaya WBP", "Total (Rp)", "Status Alokasi", "Catatan"):
             self.assertIn(name, headers)
 
     def test_esp32_real_tenant_mode_snapshots(self):
@@ -154,6 +154,30 @@ class BillingTariffTests(unittest.TestCase):
         db.insert_esp32_real_reading(31, {"kwh": 11}, "2026-11-09 17:02:00")
         result = billing.compute("2026-11-09 17:01:00", "2026-11-09 17:02:00").iloc[0]
         self.assertEqual(result["Total (Rp)"], 1500)
+
+    def test_boundary_at_2200_goes_to_wbp(self):
+        self.insert("2026-11-09 21:59:00", 10)
+        self.insert("2026-11-09 22:00:00", 11)
+        self.insert("2026-11-09 22:01:00", 12)
+        row = billing.compute("2026-11-09 21:59:00", "2026-11-09 22:01:00").iloc[0]
+        self.assertEqual(row["kWh WBP"], 1)
+        self.assertEqual(row["kWh LWBP"], 1)
+        self.assertEqual(row["kWh Belum Teralokasi"], 0)
+        self.assertEqual(row["Total (Rp)"], 2500)
+
+    def test_straddling_boundary_without_exact_reading_is_not_assumed(self):
+        self.insert("2026-11-09 16:59:00", 10)
+        self.insert("2026-11-09 17:01:00", 12)
+        row = billing.compute("2026-11-09 16:59:00", "2026-11-09 17:01:00").iloc[0]
+        self.assertEqual(row["kWh Belum Teralokasi"], 2)
+        self.assertIsNone(row["Total (Rp)"])
+
+    def test_long_gap_is_not_allocated(self):
+        self.insert("2026-11-09 18:00:00", 10)
+        self.insert("2026-11-09 18:10:00", 12)
+        row = billing.compute("2026-11-09 18:00:00", "2026-11-09 18:10:00").iloc[0]
+        self.assertEqual(row["kWh Belum Teralokasi"], 2)
+        self.assertIsNone(row["Total (Rp)"])
 
 
 if __name__ == "__main__":

@@ -351,11 +351,11 @@ def render_live():
             for col in ["Tarif (Rp/kWh)", "Biaya LWBP", "Biaya WBP",
                         "Biaya Energi", "PPJ", "Biaya Admin", "Total (Rp)"]:
                 show[col] = show[col].map(rupiah)
-            st.caption("Setiap tenant mengikuti jenis tarif yang dipilih. Saat tarif ganda aktif, "
-                       "biaya dihitung dari snapshot WBP/LWBP "
-                       "yang valid. Interval yang hilang, melewati batas tarif, atau "
-                       "rekaman sebelum aktivasi tidak diperkirakan secara otomatis. "
-                       "Baris dengan alokasi tidak lengkap tidak memiliki total tagihan.")
+            st.caption("Tarif mengikuti pengaturan per tenant. Bacaan tepat 17.00 "
+                       "mengakhiri interval LWBP; bacaan tepat 22.00 mengakhiri "
+                       "interval WBP. Jika bacaan batas tidak tersedia, terjadi jeda "
+                       "panjang, atau riwayat tarif tidak lengkap, kolom Status Alokasi "
+                       "menunjukkan perlu pemeriksaan dan total tidak dihitung.")
             invalid = df["Total (Rp)"].isna().sum()
             if invalid:
                 st.warning(f"{invalid} meter belum memiliki total tagihan lengkap; "
@@ -400,9 +400,10 @@ def render_live():
                 st.info("Belum ada rekaman baru dengan tarif per waktu. Rekaman lama "
                         "tidak direkayasa menjadi tarif historis.")
             else:
-                st.caption("Rekaman tarif tersimpan berdasarkan pengaturan saat pencatatan. "
-                           "Ini bukan tagihan resmi; selisih kWh pada pergantian periode "
-                           "atau celah panjang tidak dialokasikan otomatis.")
+                st.caption("Setiap baris menunjukkan interval yang berakhir pada waktu bacaan. "
+                           "Bacaan tepat pada batas jam masuk periode sebelumnya; "
+                           "interval yang melintasi batas tanpa bacaan tepat atau celah "
+                           "panjang tetap ditandai belum teralokasi. Bukan tagihan resmi.")
                 st.dataframe(per_minute, width="stretch", hide_index=True)
                 summary = per_minute.groupby("Periode", dropna=False).agg(
                     Jumlah_pembacaan=("Waktu", "count"),

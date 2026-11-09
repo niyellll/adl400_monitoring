@@ -2,7 +2,7 @@
 
 Nilai kontrak, jam WBP/LWBP, pengali dan jam perangkat harus diverifikasi.
 """
-from datetime import datetime, time
+from datetime import datetime, time, timedelta
 
 
 def effective_mode(mode, settings):
@@ -38,3 +38,26 @@ def describe_amps(amps, threshold):
     if float(amps) >= float(threshold):
         return "Melebihi ambang pantau (bukan diagnosis atau tarif otomatis)"
     return "Di bawah ambang pantau"
+
+def interval_period(previous_ts, current_ts, settings):
+    """Classify energy in [previous_ts, current_ts), without guessing at boundaries.
+
+    Reading at exactly 17:00 represents energy *up to* 17:00 (LWBP).
+    Reading at exactly 22:00 represents energy *up to* 22:00 (WBP).
+    If an interval straddles a boundary in its interior, return None.
+    """
+    previous = datetime.strptime(previous_ts, "%Y-%m-%d %H:%M:%S")
+    current = datetime.strptime(current_ts, "%Y-%m-%d %H:%M:%S")
+    if current <= previous:
+        return None
+    # Caller additionally validates sampling gaps. This function handles
+    # any interval, including days, by checking every crossed calendar date.
+    start = time.fromisoformat(settings.get("wbp_start", "17:00"))
+    end = time.fromisoformat(settings.get("wbp_end", "22:00"))
+    day = previous.date()
+    while day <= current.date():
+        for boundary in (datetime.combine(day, start), datetime.combine(day, end)):
+            if previous < boundary < current:
+                return None
+        day += timedelta(days=1)
+    return classify(previous_ts, settings)

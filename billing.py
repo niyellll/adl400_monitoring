@@ -157,4 +157,14 @@ def compute(start_ts: str, end_ts: str) -> pd.DataFrame:
                     "Catatan": "Estimasi WBP/LWBP dari snapshot valid; verifikasi kontrak PLN",
                 })
             output.append(row)
-    return pd.DataFrame(output)
+    result = pd.DataFrame(output)
+    if not result.empty:
+        result["Status Alokasi"] = result["Total (Rp)"].apply(
+            lambda value: "Lengkap" if pd.notna(value) else "Perlu pemeriksaan")
+        # Keep completeness and the reason prominently visible in dashboard/Excel.
+        cols = list(result.columns)
+        cols.remove("Status Alokasi")
+        position = cols.index("Catatan")
+        cols.insert(position, "Status Alokasi")
+        result = result[cols]
+    return result

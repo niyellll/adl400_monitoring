@@ -315,8 +315,25 @@ def render():
                         meter_data["Periode"] == "WBP",
                         st.session_state.demo_rate * st.session_state.demo_wbp_factor,
                         st.session_state.demo_rate)
-                    crossing = meter_data["Periode"] != meter_data["Periode"].shift(1)
-                    eligible = meter_data["delta_kwh"].notna() & ~crossing
+                    # The current kWh register is cumulative: at 17:00 the
+                    # 16:59–17:00 increment belongs to LWBP, and at 22:00
+                    # the 21:59–22:00 increment belongs to WBP.
+                    prev_period = meter_data["Periode"].shift(1)
+                    ends_at_boundary = (
+                        meter_data["ts"].dt.hour.isin([17, 22]) &
+                        meter_data["ts"].dt.minute.eq(0) &
+                        meter_data["ts"].dt.second.eq(0))
+                    boundary_crossed_inside = (
+                        meter_data["Periode"].ne(prev_period) &
+                        ~ends_at_boundary)
+                    gaps = meter_data["ts"].diff().dt.total_seconds().gt(150)
+                    eligible = (meter_data["delta_kwh"].notna() &
+                                ~boundary_crossed_inside & ~gaps)
+                    meter_data.loc[ends_at_boundary & eligible, "Periode"] = prev_period
+                    meter_data["Tarif (Rp/kWh)"] = np.where(
+                        meter_data["Periode"] == "WBP",
+                        st.session_state.demo_rate * st.session_state.demo_wbp_factor,
+                        st.session_state.demo_rate)
                     lw_kwh = float(meter_data.loc[
                         eligible & (meter_data["Periode"] == "LWBP"), "delta_kwh"].sum())
                     wb_kwh = float(meter_data.loc[
@@ -325,8 +342,10 @@ def render():
                     wb_cost = wb_kwh * st.session_state.demo_rate * st.session_state.demo_wbp_factor
                     missing = max(0.0, used - lw_kwh - wb_kwh)
                     energy = lw_cost + wb_cost
-                    note = ("Lengkap (simulasi)" if missing <= 0.001
-                            else "Belum lengkap: interval lintas periode tidak dialokasikan")
+                    note = ("LENGKAP (simulasi): batas 17:00/22:00 dialokasikan "
+                            "ke periode sebelum bacaan" if missing <= 0.001
+                            else "BELUM LENGKAP: ada celah/interval lintas tarif tanpa "
+                            "bacaan tepat pada batas")
                     total = (energy * (1 + st.session_state.demo_ppj / 100)
                              + st.session_state.demo_admin) if missing <= 0.001 else None
                     meter_data.loc[~eligible, "delta_kwh"] = np.nan
@@ -350,10 +369,16 @@ def render():
                     "Biaya Energi": energy if total is not None else None,
                     "PPJ": (energy * st.session_state.demo_ppj / 100) if total is not None else None,
                     "Biaya Admin": st.session_state.demo_admin if total is not None else None,
-                    "Total (Rp)": total, "Catatan": note,
+                    "Total (Rp)": total,
+                    "Status Alokasi": ("Lengkap" if total is not None else "Perlu pemeriksaan"),
+                    "Catatan": note,
                 })
             if results:
                 bill = pd.DataFrame(results)
+                st.caption("Aturan: energi 16:59–17:00 termasuk LWBP, "
+                           "energi 21:59–22:00 termasuk WBP. "
+                           "Saat tidak ada bacaan pada batas atau ada celah data, "
+                           "energi belum teralokasi tidak dibuat-buat.")
                 st.caption("Simulasi tarif per tenant; data yang melintasi batas WBP/LWBP "
                            "tanpa alokasi pasti diberi catatan dan total dibiarkan kosong.")
                 st.dataframe(bill, width="stretch", hide_index=True)
