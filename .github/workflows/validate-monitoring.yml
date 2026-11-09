@@ -24,9 +24,9 @@ jobs:
           python -m pip install --upgrade pip
           python -m pip install -r requirements.txt pyserial
       - name: Check Python syntax
-        run: python -m compileall -q app.py demo_dashboard.py db.py collector.py modbus.py billing.py tariff.py esp32_receiver.py
+        run: python -m compileall -q app.py demo_dashboard.py export_utils.py db.py collector.py modbus.py billing.py tariff.py esp32_receiver.py
       - name: Check WBP/LWBP and local SQLite integration
-        run: python -m unittest -v test_tariff test_db_tariff test_demo_dashboard
+        run: python -m unittest -v test_tariff test_db_tariff test_demo_dashboard test_export_utils
       - name: Smoke test demo interface
         run: |
           python - <<'PY'

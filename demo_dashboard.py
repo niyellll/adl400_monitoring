@@ -12,6 +12,7 @@ import pandas as pd
 import streamlit as st
 
 import tariff
+from export_utils import excel_csv, formatted_xlsx
 
 DEMO_METERS = [
     (1, "Uniqlo", "Area contoh 01", 28.0),
@@ -248,9 +249,15 @@ def render():
                        "tegangan terhadap bumi tidak disimpulkan dari angka fase-netral.")
             with st.expander("Seluruh rekaman simulasi per menit"):
                 st.dataframe(history, width="stretch", hide_index=True)
-                st.download_button("Unduh CSV simulasi",
-                                   history.to_csv(index=False).encode("utf-8-sig"),
-                                   "simulasi_per_menit.csv", "text/csv", key="demo_download_graph")
+                ex1, ex2 = st.columns(2)
+                ex1.download_button("⬇️ Excel rapi (.xlsx)",
+                                    formatted_xlsx(history, "Pembacaan Per Menit"),
+                                    "simulasi_per_menit.xlsx",
+                                    "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                                    key="demo_download_graph_xlsx")
+                ex2.download_button("⬇️ CSV untuk Excel",
+                                    excel_csv(history), "simulasi_per_menit.csv",
+                                    "text/csv", key="demo_download_graph")
 
     with tab_bill:
         st.subheader("Tagihan listrik per tenant — simulasi")
@@ -307,20 +314,24 @@ def render():
                 st.dataframe(bill, width="stretch", hide_index=True)
                 st.metric("Total seluruh tenant", money(bill["Total (Rp)"].sum()))
                 left, right = st.columns(2)
-                left.download_button("⬇️ CSV", bill.to_csv(index=False).encode("utf-8-sig"),
-                                     "simulasi_tagihan.csv", "text/csv")
-                buf = io.BytesIO()
-                bill.to_excel(buf, index=False, sheet_name="Simulasi Tagihan")
-                right.download_button("⬇️ Excel", buf.getvalue(), "simulasi_tagihan.xlsx",
-                                      "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
+                left.download_button("⬇️ Excel rapi (.xlsx)",
+                                     formatted_xlsx(bill, "Simulasi Tagihan"),
+                                     "simulasi_tagihan.xlsx",
+                                     "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
+                right.download_button("⬇️ CSV untuk Excel",
+                                      excel_csv(bill), "simulasi_tagihan.csv", "text/csv")
                 st.subheader("Rincian WBP / LWBP per pembacaan — simulasi")
                 ledger = pd.concat(tariff_rows, ignore_index=True)
                 ledger.rename(columns={"ts": "Waktu",
                                        "delta_kwh": "Pemakaian (kWh)"}, inplace=True)
                 st.dataframe(ledger, width="stretch", hide_index=True)
-                st.download_button("Unduh CSV simulasi WBP/LWBP",
-                                   ledger.to_csv(index=False).encode("utf-8-sig"),
-                                   "simulasi_wbp_lwbp.csv", "text/csv")
+                ex1, ex2 = st.columns(2)
+                ex1.download_button("⬇️ Excel WBP/LWBP (.xlsx)",
+                                    formatted_xlsx(ledger, "Tarif Per Menit"),
+                                    "simulasi_wbp_lwbp.xlsx",
+                                    "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
+                ex2.download_button("⬇️ CSV untuk Excel",
+                                    excel_csv(ledger), "simulasi_wbp_lwbp.csv", "text/csv")
 
     with tab_set:
         st.subheader("Pengaturan tarif simulasi")

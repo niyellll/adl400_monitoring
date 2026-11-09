@@ -14,6 +14,7 @@ import streamlit as st
 import billing
 import db
 import demo_dashboard
+from export_utils import excel_csv, formatted_xlsx
 import tariff
 
 st.set_page_config(
@@ -315,10 +316,17 @@ def render_live():
                             with st.expander("Semua rekaman per waktu (CSV)"):
                                 detail_df = pd.DataFrame(records)
                                 st.dataframe(detail_df, width="stretch", hide_index=True)
-                                st.download_button(
-                                    "Unduh data per pembacaan (CSV)",
-                                    detail_df.to_csv(index=False).encode("utf-8-sig"),
-                                    "detail_meter_live.csv", "text/csv", key="download_minute_csv")
+                                x1, x2 = st.columns(2)
+                                x1.download_button(
+                                    "⬇️ Excel rapi (.xlsx)",
+                                    formatted_xlsx(detail_df, "Pembacaan Meter"),
+                                    "detail_meter_live.xlsx",
+                                    "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                                    key="download_minute_xlsx")
+                                x2.download_button(
+                                    "⬇️ CSV untuk Excel",
+                                    excel_csv(detail_df), "detail_meter_live.csv",
+                                    "text/csv", key="download_minute_csv")
 
 
     # ------------------------------------------------------------------ TAGIHAN
@@ -385,18 +393,24 @@ def render_live():
                     Estimasi_energi_Rp=("Estimasi energi (Rp)", "sum"),
                 ).reset_index()
                 st.dataframe(summary, width="stretch", hide_index=True)
-                st.download_button(
-                    "Unduh riwayat tarif per pembacaan (CSV)",
-                    per_minute.to_csv(index=False).encode("utf-8-sig"),
-                    "tarif_per_pembacaan.csv", "text/csv",
-                    key="download_tariff_samples")
+                x1, x2 = st.columns(2)
+                x1.download_button(
+                    "⬇️ Excel tarif per pembacaan (.xlsx)",
+                    formatted_xlsx(per_minute, "Riwayat Tarif"),
+                    "tarif_per_pembacaan.xlsx",
+                    "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                    key="download_tariff_xlsx")
+                x2.download_button(
+                    "⬇️ CSV untuk Excel",
+                    excel_csv(per_minute), "tarif_per_pembacaan.csv",
+                    "text/csv", key="download_tariff_samples")
             b1, b2 = st.columns(2)
-            b1.download_button("⬇️ CSV", df.to_csv(index=False).encode("utf-8"),
-                               f"tagihan_{d1}_{d2}.csv", "text/csv")
-            buf = io.BytesIO()
-            df.to_excel(buf, index=False, sheet_name="Tagihan")
-            b2.download_button("⬇️ Excel", buf.getvalue(), f"tagihan_{d1}_{d2}.xlsx",
+            b1.download_button("⬇️ Excel rapi (.xlsx)",
+                               formatted_xlsx(df, "Tagihan"),
+                               f"tagihan_{d1}_{d2}.xlsx",
                                "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
+            b2.download_button("⬇️ CSV untuk Excel", excel_csv(df),
+                               f"tagihan_{d1}_{d2}.csv", "text/csv")
 
     # ------------------------------------------------------------------ PENGATURAN
     with tab_set:
@@ -834,7 +848,8 @@ def render_demo():
             "PPJ": bill["PPJ"].map(rupiah), "Admin": bill["Admin"].map(rupiah),
             "Total tagihan": bill["Total"].map(rupiah)})
         st.dataframe(show, width="stretch", hide_index=True)
-        st.download_button("Unduh Laporan CSV", bill.round(2).to_csv(index=False).encode("utf-8"),
+        st.download_button("Unduh Laporan CSV untuk Excel",
+                           excel_csv(bill.round(2)),
                            f"demo_tagihan_{d1}_{today}.csv", "text/csv")
 
         st.markdown("##### Rincian Estimasi Tagihan per Tenant")
