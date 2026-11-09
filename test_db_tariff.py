@@ -39,8 +39,9 @@ class DatabaseTests(unittest.TestCase):
         db.insert_reading(31, self.reading(10), "2026-11-07 16:59:00")
         db.insert_reading(31, self.reading(10.05), "2026-11-07 17:00:00")
         rows = db.get_minute_details([31], "2026-11-07 16:59:00", "2026-11-07 17:00:00")
-        self.assertEqual(rows[-1]["period"], "WBP")
-        self.assertIsNone(rows[-1]["delta_kwh"])
+        self.assertEqual(rows[-1]["period"], "LWBP")
+        self.assertAlmostEqual(rows[-1]["delta_kwh"], 0.05)
+        self.assertAlmostEqual(rows[-1]["estimated_energy_cost"], 0.05 * 1444.7)
         self.assertIn("batas", rows[-1]["note"])
 
     def test_gap_does_not_become_fake_minute_readings(self):
