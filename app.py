@@ -386,7 +386,8 @@ def render_live():
                                CASE WHEN t.mode='single' THEN 'Tarif Tunggal'
                                     WHEN t.mode='double' THEN 'Double Tarif'
                                     ELSE 'Legacy (belum diketahui)' END AS 'Jenis Tarif',
-                               t.period AS Periode,
+                               CASE WHEN t.mode='single' THEN 'TUNGGAL'
+                                    ELSE t.period END AS Periode,
                               t.rate AS 'Tarif (Rp/kWh)',
                               t.delta_kwh AS 'Pemakaian (kWh)',
                               t.estimated_energy_cost AS 'Estimasi energi (Rp)',
