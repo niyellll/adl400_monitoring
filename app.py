@@ -211,14 +211,16 @@ def render_live():
                         point_select = alt.selection_point(
                             name="reading_point", fields=["ts", "slave"],
                             on="click", empty=False)
-                        line = base.mark_line(strokeWidth=2)
-                        dots = base.mark_circle(size=55).add_params(point_select)
-                        chart = (line + dots).properties(height=390)
+                        # Garis bersih tanpa titik terlihat; marker transparan
+                        # menangkap hover/click dan memilih rekaman aktual.
+                        line = base.mark_line(strokeWidth=1.8)
+                        hitboxes = base.mark_circle(size=95, opacity=0.001).add_params(point_select)
+                        chart = (line + hitboxes).properties(height=390)
                         event = st.altair_chart(
                             chart, width="stretch", on_select="rerun",
                             selection_mode="reading_point", key="live_phase_chart")
                         st.caption("Arahkan kursor ke titik untuk melihat semua metrik langsung pada grafik. "
-                                   "Klik titik untuk memilih pembacaan pada panel di bawah. "
+                                   "Klik garis untuk memilih pembacaan dan melihat keterangan lengkap pada panel di bawah. "
                                    "Tarif historis yang tidak tercatat tetap ditandai kosong. "
                                    "Sumbu Y tidak selalu dimulai dari nol.")
                         records = record_rows
