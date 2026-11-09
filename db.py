@@ -68,6 +68,13 @@ def init():
         CREATE INDEX IF NOT EXISTS idx_reading_tariffs_ts
             ON reading_tariffs (ts, source);
         """)
+        # Forward-only migration: no existing readings or tariff history is removed.
+        meter_columns = {r["name"] for r in con.execute("PRAGMA table_info(meters)")}
+        if "tariff_mode" not in meter_columns:
+            con.execute("ALTER TABLE meters ADD COLUMN tariff_mode TEXT")
+        ledger_columns = {r["name"] for r in con.execute("PRAGMA table_info(reading_tariffs)")}
+        if "mode" not in ledger_columns:
+            con.execute("ALTER TABLE reading_tariffs ADD COLUMN mode TEXT")
         for k, v in DEFAULT_SETTINGS.items():
             con.execute("INSERT OR IGNORE INTO settings VALUES (?, ?)", (k, v))
 
@@ -93,11 +100,14 @@ def replace_meters(rows):
     with connect() as con:
         con.execute("DELETE FROM meters")
         for r in rows:
+            mode = r.get("tariff_mode")
+            if mode not in (None, "single", "double"):
+                raise ValueError("Jenis tarif tidak valid (single/double/ikuti global)")
             con.execute(
-                "INSERT INTO meters (slave, tenant, lokasi, tarif_override, aktif) "
-                "VALUES (?, ?, ?, ?, ?)",
+                "INSERT INTO meters (slave, tenant, lokasi, tarif_override, aktif, tariff_mode) "
+                "VALUES (?, ?, ?, ?, ?, ?)",
                 (int(r["slave"]), r["tenant"], r.get("lokasi") or "",
-                 r.get("tarif_override"), 1 if r.get("aktif", True) else 0))
+                 r.get("tarif_override"), 1 if r.get("aktif", True) else 0, mode))
 
 
 def active_readings_table():
@@ -108,9 +118,10 @@ def active_readings_table():
 def _snapshot_tariff(con, slave, ts, kwh, source):
     """Store per-sample tariff using the contract settings at collection time."""
     settings = get_settings()
-    meter = con.execute("SELECT tarif_override FROM meters WHERE slave=?", (slave,)).fetchone()
+    meter = con.execute("SELECT tarif_override, tariff_mode FROM meters WHERE slave=?", (slave,)).fetchone()
     override = meter["tarif_override"] if meter and meter["tarif_override"] is not None else None
-    period, rate = tariff.rate_for(ts, settings, override)
+    mode = tariff.effective_mode(meter["tariff_mode"] if meter else None, settings)
+    period, rate = tariff.rate_for(ts, settings, override, mode=mode)
     table = "esp32_real_readings" if source == "esp32" else "readings"
     prev = con.execute(
         f"SELECT ts,kwh FROM {table} WHERE slave=? AND ts<? ORDER BY ts DESC LIMIT 1",
@@ -130,9 +141,9 @@ def _snapshot_tariff(con, slave, ts, kwh, source):
             delta, cost, note = diff, diff * rate, "Estimasi dari dua pembacaan"
     con.execute(
         """INSERT OR REPLACE INTO reading_tariffs
-           (slave,ts,source,period,rate,delta_kwh,estimated_energy_cost,note)
-           VALUES (?,?,?,?,?,?,?,?)""",
-        (slave, ts, source, period, rate, delta, cost, note))
+           (slave,ts,source,period,rate,delta_kwh,estimated_energy_cost,note,mode)
+           VALUES (?,?,?,?,?,?,?,?,?)""",
+        (slave, ts, source, period, rate, delta, cost, note, mode))
 
 
 def insert_esp32_real_reading(slave, data, ts=None):
@@ -164,7 +175,7 @@ def get_minute_details(slaves, start_ts, end_ts):
     marks = ",".join("?" * len(slaves))
     with connect() as con:
         result = con.execute(
-            f"""SELECT r.*, t.period, t.rate, t.delta_kwh,
+            f"""SELECT r.*, t.period, t.rate, t.mode AS tariff_mode, t.delta_kwh,
                        t.estimated_energy_cost, t.note
                 FROM {table} r
                 LEFT JOIN reading_tariffs t

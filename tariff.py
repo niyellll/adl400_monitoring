@@ -1,9 +1,19 @@
-"""Snapshot klasifikasi tarif WBP/LWBP per pembacaan.
+"""Klasifikasi tarif per tenant berdasarkan snapshot waktu dan skema penagihan.
 
-Periode default adalah asumsi operasional yang HARUS diverifikasi terhadap
-kontrak pelanggan. Tarif adalah input pengguna, bukan harga resmi PLN.
+Nilai kontrak, jam WBP/LWBP, pengali dan jam perangkat harus diverifikasi.
 """
 from datetime import datetime, time
+
+
+def effective_mode(mode, settings):
+    """Resolve legacy/global configuration without rewriting existing tenant rows."""
+    if mode == "single":
+        return "single"
+    if mode == "double":
+        return "double"
+    return ("double" if str(settings.get("tou_enabled", "False")).lower() == "true"
+            else "single")
+
 
 def classify(ts, settings):
     t = datetime.strptime(ts, "%Y-%m-%d %H:%M:%S").time()
@@ -12,14 +22,15 @@ def classify(ts, settings):
     in_peak = (start <= t < end) if start < end else (t >= start or t < end)
     return "WBP" if in_peak else "LWBP"
 
-def rate_for(ts, settings, override=None):
-    # Tarif override legacy tetap dikenali; WBP hanya dikenakan apabila
-    # fitur diferensiasi aktif. Pengali WBP tidak otomatis berlaku untuk >100 A.
+
+def rate_for(ts, settings, override=None, mode=None):
     base = float(override if override is not None else settings.get("tarif", "1444.70"))
-    category = classify(ts, settings)
-    enabled = str(settings.get("tou_enabled", "False")).lower() == "true"
-    multiplier = float(settings.get("wbp_multiplier", "1")) if enabled and category == "WBP" else 1.0
-    return category, base * multiplier
+    period = classify(ts, settings)
+    if effective_mode(mode, settings) == "single":
+        return period, base
+    factor = float(settings.get("wbp_multiplier", "1")) if period == "WBP" else 1.0
+    return period, base * factor
+
 
 def describe_amps(amps, threshold):
     if amps is None:

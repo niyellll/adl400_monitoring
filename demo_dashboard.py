@@ -80,6 +80,11 @@ def render():
         st.session_state.demo_admin = 50000.0
     if "demo_wbp_factor" not in st.session_state:
         st.session_state.demo_wbp_factor = 1.5
+    if "demo_modes" not in st.session_state:
+        st.session_state.demo_modes = {
+            1: "double", 2: "single", 3: "double", 4: "single",
+            5: "double", 6: "single", 7: "single",
+        }
 
     now = pd.Timestamp.now().floor("min")
     data = sample_data(now.isoformat())
@@ -103,7 +108,9 @@ def render():
         total_used = float(consumption.sum())
         a, b, c = st.columns(3)
         a.metric("Total beban saat ini", f"{total_kw:,.2f} kW")
-        b.metric("Estimasi biaya hari ini", money(total_used * st.session_state.demo_rate))
+        b.metric("Biaya dasar hari ini (tanpa WBP)", money(total_used * st.session_state.demo_rate))
+        st.caption("Biaya dasar pada ringkasan bukan tagihan WBP/LWBP. "
+                   "Lihat tab Tagihan untuk pemisahan per tenant dan status alokasi.")
         c.metric("Meter simulasi", f"{len(DEMO_METERS)} / {len(DEMO_METERS)}")
         st.caption(f"Pembacaan contoh terakhir: {now:%d-%m-%Y %H:%M} · diperbarui tiap menit")
         st.divider()
@@ -113,12 +120,14 @@ def render():
             used = float(consumption.get(slave, 0))
             with cols[idx % 2].container(border=True):
                 st.markdown(f"**{tenant}** · 🔵 simulasi")
-                st.caption(f"Slave {slave} · {lokasi}")
+                st.caption(f"Slave {slave} · {lokasi} · "
+                           f"{'Double Tarif' if st.session_state.demo_modes.get(slave) == 'double' else 'Tarif Tunggal'}")
                 left, right = st.columns(2)
                 left.metric("Daya", f"{r['kw']:.2f} kW")
                 right.metric("Total kWh", f"{r['kwh']:,.2f}")
                 left.metric("Hari ini", f"{used:,.2f} kWh")
-                right.metric("Biaya hari ini", money(used * st.session_state.demo_rate))
+                right.metric("Biaya dasar hari ini (tanpa WBP)",
+                             money(used * st.session_state.demo_rate))
                 st.caption(f"V R/S/T: {r['v_a']:.1f} / {r['v_b']:.1f} / {r['v_c']:.1f} V")
                 st.caption(f"I L1/L2/L3: {r['i_a']:.2f} / {r['i_b']:.2f} / {r['i_c']:.2f} A · "
                            f"PF {r['pf']:.3f}")
@@ -147,11 +156,12 @@ def render():
                        f"Terakhir: {now:%d-%m-%Y %H:%M}")
             source = history.copy()
             source["val"] = source[metric]
+            is_double = source["slave"].map(st.session_state.demo_modes) == "double"
+            in_wbp = (source["ts"].dt.hour >= 17) & (source["ts"].dt.hour < 22)
             source["Periode tarif"] = np.where(
-                (source["ts"].dt.hour >= 17) & (source["ts"].dt.hour < 22),
-                "WBP", "LWBP")
+                ~is_double, "TUNGGAL", np.where(in_wbp, "WBP", "LWBP"))
             source["Tarif contoh (Rp/kWh)"] = np.where(
-                source["Periode tarif"] == "WBP",
+                is_double & in_wbp,
                 st.session_state.demo_rate * st.session_state.demo_wbp_factor,
                 st.session_state.demo_rate)
             source.sort_values(["slave", "ts"], inplace=True)
@@ -222,7 +232,9 @@ def render():
             k1.metric("Daya total", f"{reading['kw']:.3f} kW")
             k2.metric("Energi total", f"{reading['kwh']:.3f} kWh")
             k3.metric("PF total", f"{reading['pf']:.3f}")
-            category, rate = tariff.rate_for(key[1].strftime("%Y-%m-%d %H:%M:%S"), tariff_settings)
+            category, rate = tariff.rate_for(
+                key[1].strftime("%Y-%m-%d %H:%M:%S"), tariff_settings,
+                mode=st.session_state.demo_modes.get(key[0], "single"))
             k4.metric("Periode", category)
             st.dataframe(pd.DataFrame([
                 {"Fase": label, "Tegangan ke netral (V)": reading["v_" + ph],
@@ -279,40 +291,79 @@ def render():
             tariff_rows = []
             for slave, tenant, lokasi, _ in DEMO_METERS:
                 meter_data = filtered[filtered["slave"] == slave].sort_values("ts").copy()
-                if meter_data.empty:
+                if len(meter_data) < 2:
                     continue
                 used = max(float(meter_data["kwh"].iloc[-1] -
                                  meter_data["kwh"].iloc[0]), 0)
-                energy = used * st.session_state.demo_rate
-                ppj_cost = energy * st.session_state.demo_ppj / 100
-                total = energy + ppj_cost + st.session_state.demo_admin
-                results.append({"Slave": slave, "Tenant": tenant, "Lokasi": lokasi,
-                                "kWh Awal": meter_data["kwh"].iloc[0],
-                                "kWh Akhir": meter_data["kwh"].iloc[-1],
-                                "Pemakaian (kWh)": used,
-                                "Tarif (Rp/kWh)": st.session_state.demo_rate,
-                                "Biaya Energi": energy, "PPJ": ppj_cost,
-                                "Biaya Admin": st.session_state.demo_admin,
-                                "Total (Rp)": total})
+                mode = st.session_state.demo_modes.get(slave, "single")
                 meter_data["delta_kwh"] = meter_data["kwh"].diff().clip(lower=0)
                 meter_data["Periode"] = np.where(
                     (meter_data["ts"].dt.hour >= 17) &
                     (meter_data["ts"].dt.hour < 22), "WBP", "LWBP")
-                meter_data["Tarif (Rp/kWh)"] = np.where(
-                    meter_data["Periode"] == "WBP",
-                    st.session_state.demo_rate * st.session_state.demo_wbp_factor,
-                    st.session_state.demo_rate)
+                meter_data["Jenis Tarif"] = ("Double Tarif" if mode == "double"
+                                              else "Tarif Tunggal")
+                if mode == "single":
+                    meter_data["Periode"] = "TUNGGAL"
+                    meter_data["Tarif (Rp/kWh)"] = st.session_state.demo_rate
+                    energy = used * st.session_state.demo_rate
+                    lw_kwh = wb_kwh = lw_cost = wb_cost = 0.0
+                    missing = 0.0
+                    note = "Tarif tunggal selama 24 jam"
+                    total = energy * (1 + st.session_state.demo_ppj / 100) + st.session_state.demo_admin
+                else:
+                    meter_data["Tarif (Rp/kWh)"] = np.where(
+                        meter_data["Periode"] == "WBP",
+                        st.session_state.demo_rate * st.session_state.demo_wbp_factor,
+                        st.session_state.demo_rate)
+                    crossing = meter_data["Periode"] != meter_data["Periode"].shift(1)
+                    eligible = meter_data["delta_kwh"].notna() & ~crossing
+                    lw_kwh = float(meter_data.loc[
+                        eligible & (meter_data["Periode"] == "LWBP"), "delta_kwh"].sum())
+                    wb_kwh = float(meter_data.loc[
+                        eligible & (meter_data["Periode"] == "WBP"), "delta_kwh"].sum())
+                    lw_cost = lw_kwh * st.session_state.demo_rate
+                    wb_cost = wb_kwh * st.session_state.demo_rate * st.session_state.demo_wbp_factor
+                    missing = max(0.0, used - lw_kwh - wb_kwh)
+                    energy = lw_cost + wb_cost
+                    note = ("Lengkap (simulasi)" if missing <= 0.001
+                            else "Belum lengkap: interval lintas periode tidak dialokasikan")
+                    total = (energy * (1 + st.session_state.demo_ppj / 100)
+                             + st.session_state.demo_admin) if missing <= 0.001 else None
+                    meter_data.loc[~eligible, "delta_kwh"] = np.nan
                 meter_data["Estimasi energi (Rp)"] = (
                     meter_data["delta_kwh"] * meter_data["Tarif (Rp/kWh)"])
-                tariff_rows.append(meter_data[["ts", "Tenant", "Periode",
+                tariff_rows.append(meter_data[["ts", "Tenant", "Jenis Tarif", "Periode",
                                                "Tarif (Rp/kWh)", "delta_kwh",
                                                "Estimasi energi (Rp)"]])
+                results.append({
+                    "Slave": slave, "Tenant": tenant, "Lokasi": lokasi,
+                    "Jenis Tarif": "Double Tarif" if mode == "double" else "Tarif Tunggal",
+                    "kWh Awal": meter_data["kwh"].iloc[0],
+                    "kWh Akhir": meter_data["kwh"].iloc[-1],
+                    "Pemakaian (kWh)": used, "kWh LWBP": lw_kwh if mode == "double" else None,
+                    "kWh WBP": wb_kwh if mode == "double" else None,
+                    "kWh Belum Teralokasi": missing if mode == "double" else None,
+                    "Tarif (Rp/kWh)": st.session_state.demo_rate,
+                    "Pengali WBP": (st.session_state.demo_wbp_factor if mode == "double" else 1.0),
+                    "Biaya LWBP": lw_cost if mode == "double" else None,
+                    "Biaya WBP": wb_cost if mode == "double" else None,
+                    "Biaya Energi": energy if total is not None else None,
+                    "PPJ": (energy * st.session_state.demo_ppj / 100) if total is not None else None,
+                    "Biaya Admin": st.session_state.demo_admin if total is not None else None,
+                    "Total (Rp)": total, "Catatan": note,
+                })
             if results:
                 bill = pd.DataFrame(results)
-                st.caption("Estimasi biaya konvensional berdasarkan selisih kWh awal-akhir; "
-                           "tabel WBP/LWBP di bawah adalah simulasi terpisah.")
+                st.caption("Simulasi tarif per tenant; data yang melintasi batas WBP/LWBP "
+                           "tanpa alokasi pasti diberi catatan dan total dibiarkan kosong.")
                 st.dataframe(bill, width="stretch", hide_index=True)
-                st.metric("Total seluruh tenant", money(bill["Total (Rp)"].sum()))
+                complete = bill["Total (Rp)"].dropna()
+                st.metric("Total simulasi tenant lengkap",
+                          money(complete.sum()) if not complete.empty else "—")
+                if len(complete) != len(bill):
+                    st.warning(f"{len(bill) - len(complete)} tenant belum memiliki "
+                               "alokasi lengkap; jangan anggap total parsial sebagai "
+                               "tagihan seluruh tenant.")
                 left, right = st.columns(2)
                 left.download_button("⬇️ Excel rapi (.xlsx)",
                                      formatted_xlsx(bill, "Simulasi Tagihan"),
@@ -348,10 +399,25 @@ def render():
                         key="demo_wbp_factor")
         st.caption("WBP 17:00–22:00, LWBP 22:00–17:00. Ini skenario contoh "
                    "yang tetap harus disesuaikan dengan ketentuan kontrak.")
-        st.subheader("Daftar meter / tenant — simulasi")
-        st.dataframe(pd.DataFrame(
-            [{"Slave": slave, "Tenant": name, "Lokasi": lokasi, "Kapasitas contoh (kW)": peak}
-             for slave, name, lokasi, peak in DEMO_METERS]),
-            width="stretch", hide_index=True)
+        st.subheader("Jenis tarif tiap tenant — simulasi")
+        st.caption("Ubah pilihan untuk menguji Excel dan rincian tagihan. "
+                   "Pengaturan ini hanya berlaku selama sesi Demo.")
+        demo_rows = pd.DataFrame([
+            {"Slave": slave, "Tenant": name, "Jenis Tarif": (
+                "Double Tarif" if st.session_state.demo_modes.get(slave) == "double"
+                else "Tarif Tunggal")}
+            for slave, name, _, _ in DEMO_METERS
+        ])
+        edited_modes = st.data_editor(
+            demo_rows, hide_index=True, width="stretch", num_rows="fixed",
+            disabled=["Slave", "Tenant"], key="demo_tariff_mode_editor",
+            column_config={"Jenis Tarif": st.column_config.SelectboxColumn(
+                "Jenis Tarif", options=["Tarif Tunggal", "Double Tarif"], required=True)})
+        if st.button("💾 Terapkan jenis tarif simulasi"):
+            st.session_state.demo_modes = {
+                int(row["Slave"]): ("double" if row["Jenis Tarif"] == "Double Tarif" else "single")
+                for row in edited_modes.to_dict("records")
+            }
+            st.rerun()
         st.info("Untuk konfigurasi port COM10, collector, dan meter nyata, "
                 "pindah ke mode Live · meter asli pada sidebar.")

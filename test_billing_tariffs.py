@@ -78,6 +78,83 @@ class BillingTariffTests(unittest.TestCase):
         result = billing.compute("2026-11-09 17:01:00", "2026-11-09 17:02:00").iloc[0]
         self.assertEqual(result["Total (Rp)"], 2000)
 
+    def test_per_tenant_modes_override_global(self):
+        db.replace_meters([
+            {"slave": 31, "tenant": "Tunggal", "lokasi": "GF",
+             "tariff_mode": "single", "tarif_override": None, "aktif": True},
+            {"slave": 32, "tenant": "Double", "lokasi": "UG",
+             "tariff_mode": "double", "tarif_override": None, "aktif": True},
+        ])
+        for slave in (31, 32):
+            for ts, kwh in [("2026-11-09 17:01:00", 10),
+                            ("2026-11-09 17:02:00", 12)]:
+                db.insert_reading(slave, {"kwh": kwh, "v_a": 230, "v_b": 230, "v_c": 230,
+                                          "i_a": 1, "i_b": 1, "i_c": 1,
+                                          "kw": 0.1, "pf": 0.9}, ts)
+        results = billing.compute("2026-11-09 17:01:00", "2026-11-09 17:02:00")
+        a, b = [results.loc[results["Slave"] == slave].iloc[0] for slave in (31, 32)]
+        self.assertEqual(a["Jenis Tarif"], "Tarif Tunggal")
+        self.assertEqual(a["Total (Rp)"], 2000)
+        self.assertEqual(b["Jenis Tarif"], "Double Tarif")
+        self.assertEqual(b["kWh WBP"], 2)
+        self.assertEqual(b["Total (Rp)"], 3000)
+        with db.connect() as con:
+            periods = {r["slave"]: (r["period"], r["mode"]) for r in con.execute(
+                "SELECT slave, period, mode FROM reading_tariffs WHERE ts='2026-11-09 17:02:00'")}
+        self.assertEqual(periods[31], ("WBP", "single"))
+        self.assertEqual(periods[32], ("WBP", "double"))
+
+    def test_mode_change_in_period_requires_manual_review(self):
+        self.insert("2026-11-09 17:01:00", 10)
+        self.insert("2026-11-09 17:02:00", 11)
+        db.replace_meters([{"slave": 31, "tenant": "Tenant Tes", "lokasi": "GF",
+                            "tariff_mode": "single", "tarif_override": None, "aktif": True}])
+        self.insert("2026-11-09 17:03:00", 12)
+        result = billing.compute("2026-11-09 17:01:00", "2026-11-09 17:03:00").iloc[0]
+        self.assertIsNone(result["Total (Rp)"])
+        self.assertIn("Perubahan skema tarif", result["Catatan"])
+
+    def test_double_tariff_overrides_disabled_global(self):
+        db.save_settings({"tou_enabled": "False"})
+        db.replace_meters([{"slave": 31, "tenant": "Tenant Tes", "lokasi": "GF",
+                            "tariff_mode": "double", "tarif_override": None, "aktif": True}])
+        self.insert("2026-11-09 17:01:00", 10)
+        self.insert("2026-11-09 17:02:00", 11)
+        result = billing.compute("2026-11-09 17:01:00", "2026-11-09 17:02:00").iloc[0]
+        self.assertEqual(result["Total (Rp)"], 1500)
+
+    def test_migration_keeps_old_readings_and_meter_rows(self):
+        db.replace_meters([{"slave": 31, "tenant": "Tenant Tes", "lokasi": "GF",
+                            "tariff_mode": "double", "tarif_override": None, "aktif": True}])
+        self.insert("2026-11-09 17:01:00", 10)
+        db.init()
+        self.assertEqual(db.get_meters()[0]["tariff_mode"], "double")
+        with db.connect() as con:
+            count = con.execute("SELECT COUNT(*) FROM readings").fetchone()[0]
+        self.assertEqual(count, 1)
+
+    def test_excel_has_tariff_split_and_mode_columns(self):
+        from io import BytesIO
+        from openpyxl import load_workbook
+        from export_utils import formatted_xlsx
+        self.insert("2026-11-09 17:01:00", 10)
+        self.insert("2026-11-09 17:02:00", 11)
+        frame = billing.compute("2026-11-09 17:01:00", "2026-11-09 17:02:00")
+        book = load_workbook(BytesIO(formatted_xlsx(frame, "Tagihan")))
+        headers = [cell.value for cell in book["Tagihan"][1]]
+        for name in ("Jenis Tarif", "kWh LWBP", "kWh WBP", "Biaya LWBP",
+                     "Biaya WBP", "Total (Rp)", "Catatan"):
+            self.assertIn(name, headers)
+
+    def test_esp32_real_tenant_mode_snapshots(self):
+        db.save_settings({"conn_type": "esp32", "tou_enabled": "False"})
+        db.replace_meters([{"slave": 31, "tenant": "Tenant Tes", "lokasi": "GF",
+                            "tariff_mode": "double", "tarif_override": None, "aktif": True}])
+        db.insert_esp32_real_reading(31, {"kwh": 10}, "2026-11-09 17:01:00")
+        db.insert_esp32_real_reading(31, {"kwh": 11}, "2026-11-09 17:02:00")
+        result = billing.compute("2026-11-09 17:01:00", "2026-11-09 17:02:00").iloc[0]
+        self.assertEqual(result["Total (Rp)"], 1500)
+
 
 if __name__ == "__main__":
     unittest.main()
