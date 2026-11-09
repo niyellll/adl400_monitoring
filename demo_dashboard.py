@@ -144,22 +144,54 @@ def render():
                            (data["ts"] >= now - pd.Timedelta(hours=hours))].copy()
             st.caption(f"{len(history):,} sampel simulasi · Resolusi 1 menit · "
                        f"Terakhir: {now:%d-%m-%Y %H:%M}")
-            source = history.rename(columns={metric: "val"})
+            source = history.copy()
+            source["val"] = source[metric]
+            source["Periode tarif"] = np.where(
+                (source["ts"].dt.hour >= 17) & (source["ts"].dt.hour < 22),
+                "WBP", "LWBP")
+            source["Tarif contoh (Rp/kWh)"] = np.where(
+                source["Periode tarif"] == "WBP",
+                st.session_state.demo_rate * st.session_state.demo_wbp_factor,
+                st.session_state.demo_rate)
+            source.sort_values(["slave", "ts"], inplace=True)
+            source["Selisih daya (kW)"] = source.groupby("slave")["kw"].diff()
+            for ph in ("a", "b", "c"):
+                source["Selisih arus " + ph.upper() + " (A)"] = (
+                    source.groupby("slave")["i_" + ph].diff())
             base = alt.Chart(source).encode(
                 x=alt.X("ts:T", title="Waktu", axis=alt.Axis(
                     format="%H:%M" if hours <= 24 else "%d %b", tickCount=7)),
                 y=alt.Y("val:Q", title=metrics[metric], scale=alt.Scale(zero=False)),
                 color=alt.Color("Tenant:N", title="Tenant"),
-                tooltip=[alt.Tooltip("ts:T", title="Waktu", format="%d-%m-%Y %H:%M"),
-                         "Tenant:N", alt.Tooltip("val:Q", title=metrics[metric], format=",.3f")])
+                tooltip=[
+                    alt.Tooltip("ts:T", title="Waktu", format="%d-%m-%Y %H:%M"),
+                    alt.Tooltip("Tenant:N", title="Tenant"),
+                    alt.Tooltip("kw:Q", title="Daya total (kW)", format=",.3f"),
+                    alt.Tooltip("kwh:Q", title="Energi kumulatif (kWh)", format=",.3f"),
+                    alt.Tooltip("v_a:Q", title="Tegangan R/L1 (V)", format=",.1f"),
+                    alt.Tooltip("v_b:Q", title="Tegangan S/L2 (V)", format=",.1f"),
+                    alt.Tooltip("v_c:Q", title="Tegangan T/L3 (V)", format=",.1f"),
+                    alt.Tooltip("i_a:Q", title="Arus R/L1 (A)", format=",.2f"),
+                    alt.Tooltip("i_b:Q", title="Arus S/L2 (A)", format=",.2f"),
+                    alt.Tooltip("i_c:Q", title="Arus T/L3 (A)", format=",.2f"),
+                    alt.Tooltip("pf:Q", title="Faktor daya", format=".3f"),
+                    alt.Tooltip("Periode tarif:N", title="WBP/LWBP"),
+                    alt.Tooltip("Tarif contoh (Rp/kWh):Q", title="Tarif simulasi (Rp/kWh)", format=",.2f"),
+                    alt.Tooltip("Selisih daya (kW):Q", title="Perubahan daya dari menit sebelumnya", format="+.3f"),
+                    alt.Tooltip("Selisih arus A (A):Q", title="Perubahan arus L1 (A)", format="+.2f"),
+                    alt.Tooltip("Selisih arus B (A):Q", title="Perubahan arus L2 (A)", format="+.2f"),
+                    alt.Tooltip("Selisih arus C (A):Q", title="Perubahan arus L3 (A)", format="+.2f"),
+                ])
             selection = alt.selection_point(name="demo_point", fields=["ts", "slave"],
                                             on="click", empty=False)
             chart = (base.mark_line(strokeWidth=1.7) +
                      base.mark_circle(size=45).add_params(selection)).properties(height=390)
             event = st.altair_chart(chart, width="stretch", on_select="rerun",
                                     selection_mode="demo_point", key="demo_point_chart")
-            st.caption("Klik titik grafik untuk memeriksa semua parameter pada menit tersebut. "
-                       "Jika sulit memilih titik, gunakan pemilih waktu di bawah.")
+            st.caption("Arahkan kursor ke titik untuk melihat detail lengkap langsung pada grafik: "
+                       "daya, energi, R/S/T, arus, PF, tarif, dan perubahan dari menit sebelumnya. "
+                       "Klik titik untuk memilih rekaman pada panel detail di bawah grafik. "
+                       "Seluruh angka adalah SIMULASI.")
             lookup = history.set_index(["slave", "ts"]).sort_index()
             choices = list(lookup.index)
             chosen_point = None
