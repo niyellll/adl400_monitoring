@@ -6,6 +6,7 @@ Data lama, celah panjang, reset meter dan transisi tarif tidak diestimasi diam-d
 import pandas as pd
 
 import db
+import tariff
 
 
 def compute(start_ts: str, end_ts: str) -> pd.DataFrame:
@@ -13,7 +14,6 @@ def compute(start_ts: str, end_ts: str) -> pd.DataFrame:
     default_rate = float(settings["tarif"])
     ppj_rate = float(settings["ppj_persen"]) / 100
     admin = float(settings["biaya_admin"])
-    tou_enabled = str(settings.get("tou_enabled", "False")).lower() == "true"
     table = db.active_readings_table()
     source = "esp32" if table == "esp32_real_readings" else "serial"
     output = []
@@ -28,13 +28,17 @@ def compute(start_ts: str, end_ts: str) -> pd.DataFrame:
             ).fetchall()
             base = (meter["tarif_override"] if meter["tarif_override"] is not None
                     else default_rate)
+            mode = tariff.effective_mode(meter.get("tariff_mode"), settings)
+            display_mode = "Double Tarif" if mode == "double" else "Tarif Tunggal"
             row = {
                 "Slave": slave, "Tenant": meter["tenant"], "Lokasi": meter["lokasi"],
+                "Jenis Tarif": display_mode,
                 "kWh Awal": round(float(points[0]["kwh"]), 2) if points else None,
                 "kWh Akhir": round(float(points[-1]["kwh"]), 2) if points else None,
                 "Pemakaian (kWh)": None, "kWh LWBP": None, "kWh WBP": None,
                 "kWh Belum Teralokasi": None,
                 "Tarif (Rp/kWh)": float(base),
+                "Pengali WBP": float(settings.get("wbp_multiplier", "1")) if mode == "double" else 1.0,
                 "Biaya LWBP": None, "Biaya WBP": None,
                 "Biaya Energi": None, "PPJ": None, "Biaya Admin": None,
                 "Total (Rp)": None, "Catatan": "tidak ada data",
@@ -54,8 +58,21 @@ def compute(start_ts: str, end_ts: str) -> pd.DataFrame:
                 continue
 
             row["Pemakaian (kWh)"] = round(raw_usage, 2)
-            if not tou_enabled:
-                # Mode tarif tunggal tetap kompatibel dengan pembacaan historis.
+            if mode == "single":
+                # Legacy flat-rate is safe only if the selected interval has
+                # no double-tariff snapshots recorded under an earlier mode.
+                mixed = con.execute(
+                    """SELECT 1 FROM reading_tariffs WHERE source=? AND slave=?
+                       AND ts>? AND ts<=? AND mode='double' LIMIT 1""",
+                    (source, slave, points[0]["ts"], points[-1]["ts"]),
+                ).fetchone()
+                if mixed:
+                    row["Catatan"] = (
+                        "Perubahan skema tarif dalam periode; pilih periode terpisah. "
+                        "Total tidak dihitung."
+                    )
+                    output.append(row)
+                    continue
                 energy = raw_usage * float(base)
                 row.update({
                     "Biaya Energi": round(energy),
@@ -68,7 +85,7 @@ def compute(start_ts: str, end_ts: str) -> pd.DataFrame:
                 continue
 
             snapshots = con.execute(
-                """SELECT period, delta_kwh, estimated_energy_cost, note
+                """SELECT period, delta_kwh, estimated_energy_cost, note, mode
                    FROM reading_tariffs
                    WHERE source=? AND slave=? AND ts>=? AND ts<=?
                    ORDER BY ts""",
@@ -76,7 +93,8 @@ def compute(start_ts: str, end_ts: str) -> pd.DataFrame:
             ).fetchall()
             lw_kwh = wb_kwh = lw_cost = wb_cost = 0.0
             for sample in snapshots:
-                if sample["delta_kwh"] is None or sample["estimated_energy_cost"] is None:
+                if (sample["mode"] != "double" or sample["delta_kwh"] is None
+                        or sample["estimated_energy_cost"] is None):
                     continue
                 amount = float(sample["delta_kwh"])
                 cost = float(sample["estimated_energy_cost"])
@@ -95,11 +113,12 @@ def compute(start_ts: str, end_ts: str) -> pd.DataFrame:
             # boleh ikut dihitung dalam rentang invoice ini.
             first_ts = points[0]["ts"]
             first_snapshot = con.execute(
-                """SELECT period, delta_kwh, estimated_energy_cost
+                """SELECT period, delta_kwh, estimated_energy_cost, mode
                    FROM reading_tariffs WHERE source=? AND slave=? AND ts=?""",
                 (source, slave, first_ts),
             ).fetchone()
-            if first_snapshot and first_snapshot["delta_kwh"] is not None:
+            if (first_snapshot and first_snapshot["mode"] == "double"
+                    and first_snapshot["delta_kwh"] is not None):
                 amount = float(first_snapshot["delta_kwh"])
                 cost = float(first_snapshot["estimated_energy_cost"])
                 if first_snapshot["period"] == "WBP":
