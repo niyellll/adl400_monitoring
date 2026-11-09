@@ -348,11 +348,18 @@ def render_live():
             st.info("Belum ada meter.")
         else:
             show = df.copy()
-            for col in ["Tarif (Rp/kWh)", "Biaya Energi", "PPJ", "Biaya Admin", "Total (Rp)"]:
+            for col in ["Tarif (Rp/kWh)", "Biaya LWBP", "Biaya WBP",
+                        "Biaya Energi", "PPJ", "Biaya Admin", "Total (Rp)"]:
                 show[col] = show[col].map(rupiah)
-            st.caption("Estimasi berdasarkan pembacaan pertama dan terakhir yang tersedia "
-                       "dalam periode terpilih, bukan tagihan resmi satu bulan penuh. "
-                       "Geser tabel secara horizontal untuk melihat seluruh kolom.")
+            st.caption("Saat tarif ganda aktif, biaya dihitung dari snapshot WBP/LWBP "
+                       "yang valid. Interval yang hilang, melewati batas tarif, atau "
+                       "rekaman sebelum aktivasi tidak diperkirakan secara otomatis. "
+                       "Baris dengan alokasi tidak lengkap tidak memiliki total tagihan.")
+            if settings.get("tou_enabled", "False").lower() == "true":
+                invalid = df["Total (Rp)"].isna().sum()
+                if invalid:
+                    st.warning(f"{invalid} meter belum memiliki total tagihan lengkap; "
+                               "periksa kolom kWh Belum Teralokasi dan Catatan.")
             st.dataframe(
                 show, width="stretch", hide_index=True, height=360,
                 column_config={
@@ -364,7 +371,12 @@ def render_live():
                     "Total (Rp)": st.column_config.TextColumn("Total (Rp)", width="medium"),
                 },
             )
-            st.metric("Total seluruh tenant", rupiah(df["Total (Rp)"].sum()))
+            valid_total = df["Total (Rp)"].dropna()
+            st.metric("Total estimasi tenant yang lengkap",
+                      rupiah(valid_total.sum()) if not valid_total.empty else "-")
+            if len(valid_total) != len(df):
+                st.caption(f"Hanya {len(valid_total)} dari {len(df)} meter memiliki "
+                           "estimasi tagihan lengkap. Nilai ini bukan total seluruh tenant.")
             st.subheader("Rincian WBP / LWBP per pembacaan")
             with db.connect() as con:
                 from pandas import read_sql_query

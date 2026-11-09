@@ -1,43 +1,141 @@
-"""Perhitungan tagihan listrik per tenant dari selisih kWh pada suatu periode."""
+"""Estimasi tagihan tenant dengan rincian WBP/LWBP dari snapshot pembacaan asli.
+
+Hanya selisih kWh yang divalidasi saat koleksi masuk ke biaya WBP/LWBP.
+Data lama, celah panjang, reset meter dan transisi tarif tidak diestimasi diam-diam.
+"""
 import pandas as pd
 
 import db
 
 
 def compute(start_ts: str, end_ts: str) -> pd.DataFrame:
-    s = db.get_settings()
-    tarif_default = float(s["tarif"])
-    ppj = float(s["ppj_persen"]) / 100
-    admin = float(s["biaya_admin"])
-
+    settings = db.get_settings()
+    default_rate = float(settings["tarif"])
+    ppj_rate = float(settings["ppj_persen"]) / 100
+    admin = float(settings["biaya_admin"])
+    tou_enabled = str(settings.get("tou_enabled", "False")).lower() == "true"
     table = db.active_readings_table()
-    rows = []
+    source = "esp32" if table == "esp32_real_readings" else "serial"
+    output = []
+
     with db.connect() as con:
-        for m in db.get_meters():
-            r = con.execute(
-                f"""SELECT
-                     (SELECT kwh FROM {table} WHERE slave=? AND ts>=? AND ts<=? ORDER BY ts ASC  LIMIT 1) AS awal,
-                     (SELECT kwh FROM {table} WHERE slave=? AND ts>=? AND ts<=? ORDER BY ts DESC LIMIT 1) AS akhir,
-                     (SELECT COUNT(*) FROM {table} WHERE slave=? AND ts>=? AND ts<=?) AS n""",
-                (m["slave"], start_ts, end_ts) * 3).fetchone()
-            if not r["n"]:
-                rows.append({"Slave": m["slave"], "Tenant": m["tenant"], "Lokasi": m["lokasi"],
-                             "kWh Awal": None, "kWh Akhir": None, "Pemakaian (kWh)": None,
-                             "Tarif (Rp/kWh)": None, "Biaya Energi": None, "PPJ": None,
-                             "Biaya Admin": None, "Total (Rp)": None, "Catatan": "tidak ada data"})
+        for meter in db.get_meters():
+            slave = meter["slave"]
+            points = con.execute(
+                f"SELECT ts, kwh FROM {table} WHERE slave=? AND ts>=? AND ts<=? "
+                "AND kwh IS NOT NULL ORDER BY ts",
+                (slave, start_ts, end_ts),
+            ).fetchall()
+            base = (meter["tarif_override"] if meter["tarif_override"] is not None
+                    else default_rate)
+            row = {
+                "Slave": slave, "Tenant": meter["tenant"], "Lokasi": meter["lokasi"],
+                "kWh Awal": round(float(points[0]["kwh"]), 2) if points else None,
+                "kWh Akhir": round(float(points[-1]["kwh"]), 2) if points else None,
+                "Pemakaian (kWh)": None, "kWh LWBP": None, "kWh WBP": None,
+                "kWh Belum Teralokasi": None,
+                "Tarif (Rp/kWh)": float(base),
+                "Biaya LWBP": None, "Biaya WBP": None,
+                "Biaya Energi": None, "PPJ": None, "Biaya Admin": None,
+                "Total (Rp)": None, "Catatan": "tidak ada data",
+            }
+            if not points:
+                output.append(row)
                 continue
-            used = r["akhir"] - r["awal"]
-            note = ""
-            if used < 0:
-                note = "kWh turun (meter di-reset/diganti?) - cek manual"
-                used = 0
-            tarif = m["tarif_override"] or tarif_default
-            energi = used * tarif
-            pajak = energi * ppj
-            rows.append({"Slave": m["slave"], "Tenant": m["tenant"], "Lokasi": m["lokasi"],
-                         "kWh Awal": round(r["awal"], 2), "kWh Akhir": round(r["akhir"], 2),
-                         "Pemakaian (kWh)": round(used, 2), "Tarif (Rp/kWh)": tarif,
-                         "Biaya Energi": round(energi), "PPJ": round(pajak),
-                         "Biaya Admin": round(admin), "Total (Rp)": round(energi + pajak + admin),
-                         "Catatan": note})
-    return pd.DataFrame(rows)
+            if len(points) < 2:
+                row["Catatan"] = "Perlu minimal dua pembacaan untuk menghitung pemakaian"
+                output.append(row)
+                continue
+
+            raw_usage = float(points[-1]["kwh"]) - float(points[0]["kwh"])
+            if raw_usage < 0:
+                row["Catatan"] = "kWh akhir lebih kecil dari awal (reset/ganti meter); periksa manual"
+                output.append(row)
+                continue
+
+            row["Pemakaian (kWh)"] = round(raw_usage, 2)
+            if not tou_enabled:
+                # Mode tarif tunggal tetap kompatibel dengan pembacaan historis.
+                energy = raw_usage * float(base)
+                row.update({
+                    "Biaya Energi": round(energy),
+                    "PPJ": round(energy * ppj_rate),
+                    "Biaya Admin": round(admin),
+                    "Total (Rp)": round(energy * (1 + ppj_rate) + admin),
+                    "Catatan": "Tarif tunggal; WBP/LWBP tidak aktif",
+                })
+                output.append(row)
+                continue
+
+            snapshots = con.execute(
+                """SELECT period, delta_kwh, estimated_energy_cost, note
+                   FROM reading_tariffs
+                   WHERE source=? AND slave=? AND ts>=? AND ts<=?
+                   ORDER BY ts""",
+                (source, slave, start_ts, end_ts),
+            ).fetchall()
+            lw_kwh = wb_kwh = lw_cost = wb_cost = 0.0
+            for sample in snapshots:
+                if sample["delta_kwh"] is None or sample["estimated_energy_cost"] is None:
+                    continue
+                amount = float(sample["delta_kwh"])
+                cost = float(sample["estimated_energy_cost"])
+                if amount < 0:
+                    continue
+                if sample["period"] == "WBP":
+                    wb_kwh += amount
+                    wb_cost += cost
+                elif sample["period"] == "LWBP":
+                    lw_kwh += amount
+                    lw_cost += cost
+
+            allocated = lw_kwh + wb_kwh
+            # Snapshot tarif dibuat saat pencatatan dan mungkin meliputi interval
+            # sebelum tanggal awal (pembacaan pertama dalam periode), jadi tidak
+            # boleh ikut dihitung dalam rentang invoice ini.
+            first_ts = points[0]["ts"]
+            first_snapshot = con.execute(
+                """SELECT period, delta_kwh, estimated_energy_cost
+                   FROM reading_tariffs WHERE source=? AND slave=? AND ts=?""",
+                (source, slave, first_ts),
+            ).fetchone()
+            if first_snapshot and first_snapshot["delta_kwh"] is not None:
+                amount = float(first_snapshot["delta_kwh"])
+                cost = float(first_snapshot["estimated_energy_cost"])
+                if first_snapshot["period"] == "WBP":
+                    wb_kwh -= amount
+                    wb_cost -= cost
+                elif first_snapshot["period"] == "LWBP":
+                    lw_kwh -= amount
+                    lw_cost -= cost
+                allocated = lw_kwh + wb_kwh
+
+            # Snapshot dapat kehilangan cakupan karena gap dan pergantian tarif;
+            # jangan tagihkan sebagian angka sebagai total tagihan yang lengkap.
+            missing = max(0.0, raw_usage - allocated)
+            row.update({
+                "kWh LWBP": round(max(0, lw_kwh), 3),
+                "kWh WBP": round(max(0, wb_kwh), 3),
+                "kWh Belum Teralokasi": round(missing, 3),
+                "Biaya LWBP": round(lw_cost),
+                "Biaya WBP": round(wb_cost),
+            })
+            tolerance = max(1e-6, abs(raw_usage) * 1e-6)
+            if allocated > raw_usage + tolerance:
+                row["Catatan"] = "Alokasi tarif melebihi selisih kWh; perlu pemeriksaan manual"
+            elif missing > tolerance:
+                row["Catatan"] = (
+                    "BELUM LENGKAP: ada konsumsi tanpa alokasi tarif (jeda, "
+                    "batas WBP/LWBP, atau data historis). Total tidak dihitung."
+                )
+            else:
+                energy = lw_cost + wb_cost
+                row.update({
+                    "Biaya Energi": round(energy),
+                    "PPJ": round(energy * ppj_rate),
+                    "Biaya Admin": round(admin),
+                    "Total (Rp)": round(energy * (1 + ppj_rate) + admin),
+                    "Catatan": "Estimasi WBP/LWBP dari snapshot valid; verifikasi kontrak PLN",
+                })
+            output.append(row)
+    return pd.DataFrame(output)
