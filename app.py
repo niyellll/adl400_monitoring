@@ -124,6 +124,9 @@ def render_live():
                                f"I: {fmt(last['i_a'])}/{fmt(last['i_b'])}/{fmt(last['i_c'])} A · "
                                f"PF {fmt(last['pf'], 2)}")
                     st.caption(f"Update: {last['ts']}")
+                    if not online:
+                        st.warning("Pembacaan terakhir sudah terlalu lama; tegangan yang ditampilkan "
+                                   "merupakan nilai historis, bukan kondisi listrik saat ini.")
         live()
 
     # ------------------------------------------------------------------ GRAFIK
@@ -184,9 +187,9 @@ def render_live():
                         point_select = alt.selection_point(
                             name="reading_point", fields=["ts", "slave"],
                             on="click", empty=False)
-                        chart = (base.mark_line(strokeWidth=2, point=True)
-                                 .add_params(point_select)
-                                 .properties(height=390))
+                        line = base.mark_line(strokeWidth=2)
+                        dots = base.mark_circle(size=55).add_params(point_select)
+                        chart = (line + dots).properties(height=390)
                         event = st.altair_chart(
                             chart, width="stretch", on_select="rerun",
                             selection_mode="reading_point", key="live_phase_chart")
@@ -206,9 +209,15 @@ def render_live():
                             except (KeyError, TypeError, IndexError, ValueError, AttributeError):
                                 pass
                             options = list(rows.keys())
+                            if selected:
+                                selected_key = (selected["slave"], selected["ts"])
+                                if st.session_state.get("_previous_chart_point") != selected_key:
+                                    st.session_state["_previous_chart_point"] = selected_key
+                                    st.session_state["selected_live_sample"] = selected_key
+                            if st.session_state.get("selected_live_sample") not in rows:
+                                st.session_state["selected_live_sample"] = options[-1]
                             chosen = st.selectbox(
                                 "Detail rekaman (tenant dan jam)", options,
-                                index=options.index((selected["slave"], selected["ts"])) if selected else len(options)-1,
                                 format_func=lambda v: f"{names.get(v[0], 'Slave '+str(v[0]))} · {v[1]}",
                                 key="selected_live_sample")
                             r = rows[chosen]
@@ -273,7 +282,7 @@ def render_live():
                             else:
                                 st.info("Rekaman lama belum memiliki snapshot tarif. "
                                         "Tidak diklaim sebagai tarif historis.")
-                            st.caption("Tegangan R/S/T tetap ditampilkan walaupun arus atau beban nol. "
+                            st.caption("Tegangan R/S/T dari rekaman terakhir tetap ditampilkan walaupun arus atau beban nol. "
                                        "R–S, S–T, T–R dan tegangan terhadap bumi tidak dihitung dari "
                                        "tiga nilai tegangan fase-ke-netral; dibutuhkan register/alat terverifikasi.")
                             with st.expander("Semua rekaman per waktu (CSV)"):
@@ -321,6 +330,39 @@ def render_live():
                 },
             )
             st.metric("Total seluruh tenant", rupiah(df["Total (Rp)"].sum()))
+            st.subheader("Rincian WBP / LWBP per pembacaan")
+            with db.connect() as con:
+                from pandas import read_sql_query
+                source = "esp32" if settings.get("conn_type") == "esp32" else "serial"
+                per_minute = read_sql_query(
+                    """SELECT t.ts AS Waktu, t.slave AS Slave, t.period AS Periode,
+                              t.rate AS 'Tarif (Rp/kWh)',
+                              t.delta_kwh AS 'Pemakaian (kWh)',
+                              t.estimated_energy_cost AS 'Estimasi energi (Rp)',
+                              t.note AS Catatan
+                       FROM reading_tariffs t
+                       WHERE t.source=? AND t.ts>=? AND t.ts<=?
+                       ORDER BY t.ts ASC, t.slave ASC""",
+                    con, params=[source, start, end])
+            if per_minute.empty:
+                st.info("Belum ada rekaman baru dengan tarif per waktu. Rekaman lama "
+                        "tidak direkayasa menjadi tarif historis.")
+            else:
+                st.caption("Rekaman tarif tersimpan berdasarkan pengaturan saat pencatatan. "
+                           "Ini bukan tagihan resmi; selisih kWh pada pergantian periode "
+                           "atau celah panjang tidak dialokasikan otomatis.")
+                st.dataframe(per_minute, width="stretch", hide_index=True)
+                summary = per_minute.groupby("Periode", dropna=False).agg(
+                    Jumlah_pembacaan=("Waktu", "count"),
+                    kWh_teralokasi=("Pemakaian (kWh)", "sum"),
+                    Estimasi_energi_Rp=("Estimasi energi (Rp)", "sum"),
+                ).reset_index()
+                st.dataframe(summary, width="stretch", hide_index=True)
+                st.download_button(
+                    "Unduh riwayat tarif per pembacaan (CSV)",
+                    per_minute.to_csv(index=False).encode("utf-8-sig"),
+                    "tarif_per_pembacaan.csv", "text/csv",
+                    key="download_tariff_samples")
             b1, b2 = st.columns(2)
             b1.download_button("⬇️ CSV", df.to_csv(index=False).encode("utf-8"),
                                f"tagihan_{d1}_{d2}.csv", "text/csv")
