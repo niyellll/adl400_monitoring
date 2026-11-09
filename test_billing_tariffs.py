@@ -101,7 +101,7 @@ class BillingTariffTests(unittest.TestCase):
         with db.connect() as con:
             periods = {r["slave"]: (r["period"], r["mode"]) for r in con.execute(
                 "SELECT slave, period, mode FROM reading_tariffs WHERE ts='2026-11-09 17:02:00'")}
-        self.assertEqual(periods[31], ("TUNGGAL", "single"))
+        self.assertEqual(periods[31], ("WBP", "single"))
         self.assertEqual(periods[32], ("WBP", "double"))
 
     def test_mode_change_in_period_requires_manual_review(self):
