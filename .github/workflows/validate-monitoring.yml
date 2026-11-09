@@ -30,9 +30,29 @@ jobs:
       - name: Smoke test demo interface
         run: |
           python - <<'PY'
+          import os
+          import tempfile
           from streamlit.testing.v1 import AppTest
-          at = AppTest.from_file("app.py", default_timeout=30).run()
-          if at.exception:
-              raise AssertionError([str(err.message) for err in at.exception])
-          print("Streamlit demo loaded without uncaught exception")
+          with tempfile.TemporaryDirectory() as folder:
+              os.environ["ADL400_DB"] = os.path.join(folder, "monitoring_ci.db")
+              import db
+              db.DB_PATH = os.environ["ADL400_DB"]
+              db.init()
+              db.replace_meters([{"slave": 31, "tenant": "Testing", "lokasi": "CI",
+                                  "tarif_override": None, "aktif": True}])
+              def data(kwh):
+                  return {"kwh": kwh, "v_a": 230, "v_b": 229, "v_c": 231,
+                          "i_a": 4.5, "i_b": 4.1, "i_c": 4.3,
+                          "kw": 2.7, "pf": 0.9}
+              from datetime import datetime, timedelta
+              now = datetime.now().replace(microsecond=0)
+              db.insert_reading(31, data(20), (now-timedelta(minutes=2)).strftime("%Y-%m-%d %H:%M:%S"))
+              db.insert_reading(31, data(20.03), (now-timedelta(minutes=1)).strftime("%Y-%m-%d %H:%M:%S"))
+              at = AppTest.from_file("app.py", default_timeout=60).run()
+              if at.exception:
+                  raise AssertionError([str(err.message) for err in at.exception])
+              at.sidebar.radio[0].set_value("Live · meter asli").run()
+              if at.exception:
+                  raise AssertionError([str(err.message) for err in at.exception])
+              print("Streamlit Demo and Live loaded without uncaught exception")
           PY
