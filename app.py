@@ -13,6 +13,7 @@ import streamlit as st
 
 import billing
 import db
+import modbus
 import demo_dashboard
 from export_utils import excel_csv, formatted_xlsx
 import tariff
@@ -111,7 +112,8 @@ def render_live():
             for i, (m, last, today_kwh, online) in enumerate(cards):
                 with cols[i % num_columns].container(border=True):
                     st.markdown(f"**{m['tenant']}** &nbsp; {'🟢 online' if online else '🔴 offline'}")
-                    st.caption(f"Slave {m['slave']} · {m['lokasi'] or '-'}")
+                    st.caption(f"{m.get('meter_model') or 'ADL400-D'} · "
+                               f"Slave {m['slave']} · {m['lokasi'] or '-'}")
                     if not last:
                         st.write("Belum ada data.")
                         continue
@@ -455,8 +457,8 @@ def render_live():
                                          min_value=1.0,
                                          value=float(settings.get("current_alert_a", 100)),
                                          step=5.0)
-        st.caption("Ambang 100 A hanya untuk peringatan, bukan aturan otomatis tarif ganda. "
-                   "CT ratio dan model meter (ADL200/ADL400/ADL400-D) harus diverifikasi.")
+        st.caption("Ambang 100 A hanya untuk peringatan, bukan tarif otomatis. "
+                   "CT/PT dan model meter harus diverifikasi saat pemasangan.")
         try:
             from datetime import time as _time
             _time.fromisoformat(wbp_start)
@@ -467,6 +469,10 @@ def render_live():
             st.error("Format jam harus HH:MM, misalnya 17:00.")
 
         st.subheader("Koneksi ke meter")
+        st.info("Model ADL200 membaca satu fase (L1); L2/L3 kosong, bukan nol. "
+                "ADL400-D tetap memakai map COM10 yang sebelumnya berhasil. "
+                "Untuk ADL400 serta unit/firmware berbeda, cocokkan angka register "
+                "dengan manual dan layar meter sebelum memakai tagihan Live.")
         st.caption("RS485-USB / Modbus TCP menggunakan collector lokal; ESP32 Wi-Fi memakai penerima HTTP di laptop.")
         connection_types = ["serial", "tcp", "esp32"]
         conn = st.radio("Tipe koneksi", connection_types, horizontal=True,
@@ -525,16 +531,19 @@ def render_live():
             st.rerun()
 
         st.subheader("Daftar meter / tenant")
-        st.caption("Slave = alamat Modbus. Pilih tarif tiap tenant; 'Ikuti Global' "
-                   "mempertahankan konfigurasi lama. Tarif override boleh dikosongkan.")
+        st.caption("Slave = alamat Modbus. Pilih tipe perangkat ADL200 (1 fase), "
+                   "ADL400 (3 fase), atau ADL400-D (3 fase) per tenant. "
+                   "Tarif tetap dapat dipilih secara terpisah.")
         mode_labels = {"single": "Tarif Tunggal", "double": "Double Tarif"}
         label_modes = {"Ikuti Global": None, "Tarif Tunggal": "single",
                        "Double Tarif": "double"}
         mdf = pd.DataFrame(meters) if meters else pd.DataFrame(
             {"slave": pd.Series(dtype=int), "tenant": pd.Series(dtype=str),
              "lokasi": pd.Series(dtype=str), "tarif_override": pd.Series(dtype=float),
-             "aktif": pd.Series(dtype=bool), "tariff_mode": pd.Series(dtype=str)})
+             "aktif": pd.Series(dtype=bool), "tariff_mode": pd.Series(dtype=str),
+             "meter_model": pd.Series(dtype=str)})
         mdf["aktif"] = mdf["aktif"].astype(bool)
+        mdf["meter_model"] = mdf["meter_model"].fillna("ADL400-D")
         mdf["tariff_mode"] = mdf["tariff_mode"].map(
             lambda m: mode_labels.get(m, "Ikuti Global"))
         edited = st.data_editor(
@@ -544,6 +553,9 @@ def render_live():
                     "Slave", min_value=1, max_value=247, step=1, required=True),
                 "tenant": st.column_config.TextColumn("Tenant", required=True),
                 "lokasi": "Lokasi",
+                "meter_model": st.column_config.SelectboxColumn(
+                    "Model Meter", options=list(modbus.METER_MODELS), required=True,
+                    help="ADL200 hanya fase L1; ADL400 dan ADL400-D tiga fase."),
                 "tarif_override": st.column_config.NumberColumn("Tarif override (Rp/kWh)"),
                 "tariff_mode": st.column_config.SelectboxColumn(
                     "Jenis Tarif", options=list(label_modes), required=True,
@@ -558,13 +570,15 @@ def render_live():
             elif any(pd.notna(r.get("tariff_mode")) and
                      r["tariff_mode"] not in label_modes for r in rows):
                 st.error("Jenis tarif tenant tidak valid.")
+            elif any(r.get("meter_model") not in modbus.METER_MODELS for r in rows):
+                st.error("Pilih model meter ADL200, ADL400, atau ADL400-D.")
             else:
                 for r in rows:
                     if pd.isna(r.get("tarif_override")):
                         r["tarif_override"] = None
                     r["tariff_mode"] = label_modes.get(r.get("tariff_mode"))
                 db.replace_meters(rows)
-                st.success("Daftar meter tersimpan. Berlaku untuk pembacaan baru; "
+                st.success("Daftar meter dan model tersimpan. Berlaku untuk pembacaan baru; "
                            "riwayat lama tidak dihitung ulang otomatis.")
                 st.rerun()
 
