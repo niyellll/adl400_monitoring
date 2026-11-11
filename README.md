@@ -1,8 +1,20 @@
-# Monitoring Listrik Tenant – Acrel ADL400
+# Monitoring Listrik Tenant – Acrel ADL200 / ADL400 / ADL400-D
 
 Satu aplikasi **Streamlit** dengan dua mode:
 - **Demo · simulasi** (default): menampilkan contoh tujuh tenant, tren daya, dan estimasi tagihan. Tidak memerlukan meter atau collector, dan tidak menyimpan data ke database live.
 - **Live · meter asli**: membaca SQLite yang diisi oleh `collector.py`. Memiliki halaman Live, Grafik, Tagihan, dan Pengaturan.
+
+## Tipe meter / model perangkat
+
+Di **Live → Pengaturan → Daftar meter / tenant**, pilih **Model Meter** untuk setiap slave (pilihan terpisah dari jenis tarif tenant).
+
+- **ADL200**: 1 fase, kWh register `0x0000` (2 register), tegangan `0x000B`, arus `0x000C`, daya `0x000D`, PF `0x0010`. Fase L2/L3 disimpan `NULL`, tidak direkayasa menjadi nol.
+- **ADL400**: 3 fase, memakai map keluarga ADL400 sesuai manual. Konfirmasi alamat/skala, versi firmware, rasio CT/PT, dan jumlah fase pada meter sebenarnya sebelum dipakai untuk tagihan.
+- **ADL400-D**: 3 fase, menggunakan peta yang sebelumnya terbukti merespons pada pengujian COM10 slave 31. Pilihan default untuk meter lama agar data historis tidak berubah.
+
+Pembaca `collector.py` menggunakan model setiap tenant untuk memilih register. Perubahan model **tidak** menghitung ulang data lama. Label per meter juga masuk ke laporan Excel tagihan. Pengujian model bisa dilakukan tanpa perangkat: `python -m unittest -v test_meter_models`.
+
+**Penting:** model perangkat tidak sama dengan skema penagihan. Semua model dapat dipilih sebagai tarif tunggal atau WBP/LWBP di software; ini tidak berarti fitur multi-tarif fisik tersedia pada setiap unit. Untuk ADL200 (1 fase), kolom L2/L3 memang tidak berlaku. Jika mengubah model saat menggunakan slave yang sama, verifikasi identitas meter serta kontinuitas register kWh agar histori dan tarif tidak tercampur. Jangan hubungkan listrik panel tanpa teknisi berwenang.
 
 ## Jalankan
 ```bash
