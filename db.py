@@ -72,6 +72,9 @@ def init():
         meter_columns = {r["name"] for r in con.execute("PRAGMA table_info(meters)")}
         if "tariff_mode" not in meter_columns:
             con.execute("ALTER TABLE meters ADD COLUMN tariff_mode TEXT")
+        if "meter_model" not in meter_columns:
+            # Preserve existing COM10 ADL400-D setup and historical readings.
+            con.execute("ALTER TABLE meters ADD COLUMN meter_model TEXT NOT NULL DEFAULT 'ADL400-D'")
         ledger_columns = {r["name"] for r in con.execute("PRAGMA table_info(reading_tariffs)")}
         if "mode" not in ledger_columns:
             con.execute("ALTER TABLE reading_tariffs ADD COLUMN mode TEXT")
@@ -103,11 +106,16 @@ def replace_meters(rows):
             mode = r.get("tariff_mode")
             if mode not in (None, "single", "double"):
                 raise ValueError("Jenis tarif tidak valid (single/double/ikuti global)")
+            # Imported lazily to keep SQLite layer independent of serial connections.
+            from modbus import METER_MODELS
+            model = r.get("meter_model") or "ADL400-D"
+            if model not in METER_MODELS:
+                raise ValueError(f"Model meter tidak didukung: {model}")
             con.execute(
-                "INSERT INTO meters (slave, tenant, lokasi, tarif_override, aktif, tariff_mode) "
-                "VALUES (?, ?, ?, ?, ?, ?)",
+                "INSERT INTO meters (slave, tenant, lokasi, tarif_override, aktif, tariff_mode, meter_model) "
+                "VALUES (?, ?, ?, ?, ?, ?, ?)",
                 (int(r["slave"]), r["tenant"], r.get("lokasi") or "",
-                 r.get("tarif_override"), 1 if r.get("aktif", True) else 0, mode))
+                 r.get("tarif_override"), 1 if r.get("aktif", True) else 0, mode, model))
 
 
 def active_readings_table():
