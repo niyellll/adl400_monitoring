@@ -16,6 +16,6 @@ jobs:
       - name: Install dependencies
         run: python -m pip install -r requirements.txt
       - name: Check Python syntax
-        run: python -m compileall -q app.py demo_dashboard.py billing.py db.py tariff.py test_billing_tariffs.py
+        run: python -m compileall -q app.py demo_dashboard.py billing.py db.py tariff.py test_billing_tariffs.py test_meter_models.py
       - name: Test single/double modes, persistence, serial, ESP32 and XLSX
-        run: python -m unittest -v test_billing_tariffs
+        run: python -m unittest -v test_billing_tariffs test_meter_models
