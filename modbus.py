@@ -33,6 +33,32 @@ FIELDS = {
 }
 
 
+# Map ADL200 menurut manual Acrel (1 fase).
+# Field tidak tersedia pada satu fase HARUS None, bukan disimulasikan.
+ADL200_FIELDS = {
+    "kwh": (0x0000, 2, 0.01, False),
+    "v_a": (0x000B, 1, 0.1, False),
+    "i_a": (0x000C, 1, 0.01, False),
+    "kw": (0x000D, 1, 0.001, True),
+    "pf": (0x0010, 1, 0.001, True),
+}
+
+METER_MODELS = ("ADL200", "ADL400", "ADL400-D")
+MODEL_FIELDS = {
+    "ADL200": ADL200_FIELDS,
+    "ADL400": FIELDS,
+    "ADL400-D": FIELDS,
+}
+MODEL_PHASES = {"ADL200": 1, "ADL400": 3, "ADL400-D": 3}
+
+
+def fields_for(model):
+    """Only supported models are allowed. Unknown register maps must not be guessed."""
+    if model not in MODEL_FIELDS:
+        raise ValueError(f"Model meter tidak dikenal: {model!r}")
+    return MODEL_FIELDS[model]
+
+
 def crc16(data: bytes) -> bytes:
     crc = 0xFFFF
     for b in data:
@@ -107,10 +133,15 @@ def open_client(settings):
                      settings.get("parity", "N"))
 
 
-def read_meter(client, slave):
-    """Baca semua field satu meter -> dict angka."""
-    out = {}
-    for name, (addr, count, scale, signed) in FIELDS.items():
+def read_meter(client, slave, model="ADL400-D"):
+    """Baca meter dengan peta register khusus model.
+
+    Default ADL400-D menjaga kompatibilitas dengan pembacaan COM10 sebelumnya.
+    ADL400 menggunakan map keluarga ADL400, wajib cocokkan dengan manual unit.
+    """
+    out = {"kwh": None, "v_a": None, "v_b": None, "v_c": None,
+           "i_a": None, "i_b": None, "i_c": None, "kw": None, "pf": None}
+    for name, (addr, count, scale, signed) in fields_for(model).items():
         regs = client.read_holding(slave, addr, count)
         raw = (regs[0] << 16 | regs[1]) if count == 2 else regs[0]
         if signed:
