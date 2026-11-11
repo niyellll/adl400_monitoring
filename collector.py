@@ -1,4 +1,4 @@
-"""Pengumpul data: baca semua meter ADL400 berkala lalu simpan ke SQLite.
+"""Pengumpul data: baca ADL200/ADL400/ADL400-D berkala lalu simpan ke SQLite.
 
 Jalankan di PC/mini PC yang terhubung ke RS485 (atau gateway):
     python collector.py                # mode normal
@@ -65,9 +65,11 @@ def cycle(demo, state):
             client = modbus.open_client(s)
         for m in meters:
             try:
-                data = simulate(state, m["slave"]) if demo else modbus.read_meter(client, m["slave"])
+                model = m.get("meter_model") or "ADL400-D"
+                data = (simulate(state, m["slave"]) if demo else
+                        modbus.read_meter(client, m["slave"], model=model))
                 db.insert_reading(m["slave"], data)
-                print(f"[OK ] {m['tenant']} (slave {m['slave']}): "
+                print(f"[OK ] {m['tenant']} ({model}, slave {m['slave']}): "
                       f"{data['kwh']} kWh, {data['kw']} kW")
             except Exception as e:  # satu meter gagal tidak boleh menghentikan yang lain
                 print(f"[ERR] {m['tenant']} (slave {m['slave']}): {e}")
