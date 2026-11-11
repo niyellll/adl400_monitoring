@@ -32,6 +32,7 @@ def compute(start_ts: str, end_ts: str) -> pd.DataFrame:
             display_mode = "Double Tarif" if mode == "double" else "Tarif Tunggal"
             row = {
                 "Slave": slave, "Tenant": meter["tenant"], "Lokasi": meter["lokasi"],
+                "Model Meter": meter.get("meter_model") or "ADL400-D",
                 "Jenis Tarif": display_mode,
                 "kWh Awal": round(float(points[0]["kwh"]), 2) if points else None,
                 "kWh Akhir": round(float(points[-1]["kwh"]), 2) if points else None,
