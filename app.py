@@ -406,6 +406,18 @@ def render_live():
                            "Bacaan tepat pada batas jam masuk periode sebelumnya; "
                            "interval yang melintasi batas tanpa bacaan tepat atau celah "
                            "panjang tetap ditandai belum teralokasi. Bukan tagihan resmi.")
+                st.info("Untuk Excel yang kolomnya rapi, gunakan tombol **⬇️ Unduh Excel rapi (.xlsx)** di bawah ini. Hindari ikon unduh kecil pada pojok tabel: ikon bawaan Streamlit mengunduh CSV mentah yang bisa terbuka dalam satu kolom di Excel.")
+                x1, x2 = st.columns(2)
+                x1.download_button(
+                    "⬇️ Unduh Excel rapi (.xlsx) — Rincian Tarif",
+                    formatted_xlsx(per_minute, "Riwayat Tarif"),
+                    "tarif_per_pembacaan.xlsx",
+                    "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                    key="download_tariff_xlsx")
+                x2.download_button(
+                    "⬇️ CSV khusus Excel Indonesia",
+                    excel_csv(per_minute), "tarif_per_pembacaan.csv",
+                    "text/csv", key="download_tariff_samples")
                 st.dataframe(per_minute, width="stretch", hide_index=True)
                 summary = per_minute.groupby("Periode", dropna=False).agg(
                     Jumlah_pembacaan=("Waktu", "count"),
@@ -413,19 +425,8 @@ def render_live():
                     Estimasi_energi_Rp=("Estimasi energi (Rp)", "sum"),
                 ).reset_index()
                 st.dataframe(summary, width="stretch", hide_index=True)
-                x1, x2 = st.columns(2)
-                x1.download_button(
-                    "⬇️ Excel tarif per pembacaan (.xlsx)",
-                    formatted_xlsx(per_minute, "Riwayat Tarif"),
-                    "tarif_per_pembacaan.xlsx",
-                    "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-                    key="download_tariff_xlsx")
-                x2.download_button(
-                    "⬇️ CSV untuk Excel",
-                    excel_csv(per_minute), "tarif_per_pembacaan.csv",
-                    "text/csv", key="download_tariff_samples")
             b1, b2 = st.columns(2)
-            b1.download_button("⬇️ Excel rapi (.xlsx)",
+            b1.download_button("⬇️ Unduh Excel rapi (.xlsx) — Tagihan",
                                formatted_xlsx(df, "Tagihan"),
                                f"tagihan_{d1}_{d2}.xlsx",
                                "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
