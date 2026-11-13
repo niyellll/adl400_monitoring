@@ -17,6 +17,7 @@ import modbus
 import demo_dashboard
 from export_utils import excel_csv, formatted_xlsx
 import tariff
+from live_metrics import connection_state, daily_energy_cost
 
 st.set_page_config(
     page_title="Monitoring Listrik Tenant", page_icon="⚡",
@@ -81,56 +82,71 @@ def render_live():
                 st.info("Belum ada meter. Tambahkan di tab **Pengaturan**.")
                 return
             today = datetime.combine(date.today(), time.min).strftime("%Y-%m-%d %H:%M:%S")
+            source = "esp32" if settings.get("conn_type") == "esp32" else "serial"
             total_kw, total_cost = 0.0, 0.0
+            all_complete = True
             cards = []
             for m in ms:
                 last = db.last_reading(m["slave"])
-                if not last:
-                    cards.append((m, None, None, False))
-                    continue
-                age = (datetime.now() - datetime.strptime(last["ts"], "%Y-%m-%d %H:%M:%S")).total_seconds()
-                online = age <= interval * 3 + 10
+                poll = db.get_poll_status(m["slave"], source)
+                state, detail = connection_state(last, poll, interval)
                 with db.connect() as con:
-                    r = con.execute(f"SELECT kwh FROM {readings_table} WHERE slave=? AND ts>=? ORDER BY ts ASC LIMIT 1",
-                                    (m["slave"], today)).fetchone()
-                today_kwh = max(last["kwh"] - r["kwh"], 0) if r else 0
-                cards.append((m, last, today_kwh, online))
-                if online:
-                    total_kw += (last["kw"] or 0)
-                total_cost += today_kwh * (m["tarif_override"] or tarif)
+                    energy = daily_energy_cost(con, m["slave"], source, readings_table, today)
+                cards.append((m, last, energy, state, detail, poll))
+                if state == "online" and last and last["kw"] is not None:
+                    total_kw += last["kw"]
+                if energy["energy_cost"] is not None:
+                    total_cost += energy["energy_cost"]
+                if not energy["complete"]:
+                    all_complete = False
 
             c1, c2, c3 = st.columns(3)
-            c1.metric("Total beban saat ini", f"{total_kw:,.2f} kW")
-            c2.metric("Estimasi biaya hari ini", rupiah(total_cost))
-            c3.metric("Meter online", f"{sum(1 for c in cards if c[3])} / {len(cards)}")
+            c1.metric("Total beban meter Online", f"{total_kw:,.2f} kW")
+            c2.metric("Estimasi energi teralokasi hari ini", rupiah(total_cost))
+            c3.metric("Meter Online", f"{sum(1 for c in cards if c[3] == 'online')} / {len(cards)}")
+            if not all_complete:
+                st.warning("Biaya hari ini merupakan subtotal energi yang berhasil dialokasikan, "
+                           "BUKAN total tagihan lengkap. Ada tenant dengan data awal, "
+                           "jeda pembacaan, atau perubahan skema tarif.")
+            st.caption("Biaya Live memakai snapshot tarif tersimpan, termasuk pengali WBP; "
+                       "belum termasuk PPJ/biaya admin dan tidak menebak interval yang hilang.")
             st.divider()
 
-            # Satu meter mendapat satu kartu lebar penuh; banyak meter dibagi
-            # maksimal dua kolom agar label dan angka tidak terpotong.
             num_columns = min(len(cards), 2)
             cols = st.columns(num_columns)
-            for i, (m, last, today_kwh, online) in enumerate(cards):
+            for i, (m, last, energy, state, detail, poll) in enumerate(cards):
                 with cols[i % num_columns].container(border=True):
-                    st.markdown(f"**{m['tenant']}** &nbsp; {'🟢 online' if online else '🔴 offline'}")
+                    state_label = {"online": "🟢 Online", "gangguan": "🟠 Gangguan",
+                                   "offline": "🔴 Offline"}[state]
+                    st.markdown(f"**{m['tenant']}** &nbsp; {state_label}")
                     st.caption(f"{m.get('meter_model') or 'ADL400-D'} · "
                                f"Slave {m['slave']} · {m['lokasi'] or '-'}")
                     if not last:
-                        st.write("Belum ada data.")
+                        st.write("Belum ada pembacaan berhasil.")
+                        st.caption(detail)
                         continue
                     a, b = st.columns(2)
-                    a.metric("Daya", f"{last['kw']:.2f} kW" if last["kw"] is not None else "—")
-                    b.metric("Total kWh", f"{last['kwh']:,.2f}")
-                    a.metric("Hari ini", f"{today_kwh:.2f} kWh")
-                    b.metric("Biaya hari ini", rupiah(today_kwh * (m["tarif_override"] or tarif)))
+                    a.metric("Daya (pembacaan terakhir)",
+                             f"{last['kw']:.2f} kW" if last["kw"] is not None else "—")
+                    b.metric("Total kWh (pembacaan terakhir)", f"{last['kwh']:,.2f}")
+                    a.metric("Pemakaian hari ini",
+                             f"{energy['usage_kwh']:.2f} kWh" if energy["usage_kwh"] is not None else "—")
+                    b.metric("Biaya energi teralokasi",
+                             rupiah(energy["energy_cost"]) if energy["energy_cost"] is not None else "—")
+                    st.caption(f"Status biaya: {'Lengkap' if energy['complete'] else 'SEMENTARA'} · "
+                               f"{energy['reason']} · "
+                               f"kWh belum teralokasi: {energy['missing_kwh']:.3f}")
                     def fmt(value, digits=1):
                         return f"{value:.{digits}f}" if value is not None else "—"
                     st.caption(f"V: {fmt(last['v_a'], 0)}/{fmt(last['v_b'], 0)}/{fmt(last['v_c'], 0)} V · "
                                f"I: {fmt(last['i_a'])}/{fmt(last['i_b'])}/{fmt(last['i_c'])} A · "
                                f"PF {fmt(last['pf'], 2)}")
-                    st.caption(f"Update: {last['ts']}")
-                    if not online:
-                        st.warning("Pembacaan terakhir sudah terlalu lama; tegangan yang ditampilkan "
-                                   "merupakan nilai historis, bukan kondisi listrik saat ini.")
+                    st.caption(f"Pembacaan terakhir berhasil: {last['ts']}")
+                    if poll and poll.get("last_attempt"):
+                        st.caption(f"Polling terakhir: {poll['last_attempt']} · "
+                                   f"Gagal beruntun: {poll['consecutive_failures']}")
+                    if state != "online":
+                        st.warning(detail + ". Angka listrik yang ditampilkan adalah data historis.")
         live()
 
     # ------------------------------------------------------------------ GRAFIK
@@ -345,7 +361,9 @@ def render_live():
         end = datetime.combine(d2, time.max).strftime("%Y-%m-%d %H:%M:%S")
         st.caption(f"Tarif default: {rupiah(tarif)}/kWh · PPJ {settings['ppj_persen']}% · "
                    f"Admin {rupiah(float(settings['biaya_admin']))}/tenant")
-        df = billing.compute(start, end)
+        include_inactive = st.checkbox("Tampilkan juga meter nonaktif (riwayat)", value=False,
+                                      help="Default hanya meter aktif; riwayat meter lama tetap tersimpan.")
+        df = billing.compute(start, end, include_inactive=include_inactive)
         if df.empty:
             st.info("Belum ada meter.")
         else:
@@ -398,6 +416,7 @@ def render_live():
                        WHERE t.source=? AND t.ts>=? AND t.ts<=?
                        ORDER BY t.ts ASC, t.slave ASC""",
                     con, params=[source, start, end])
+            per_minute = per_minute[per_minute["Slave"].isin(df["Slave"])].copy()
             if per_minute.empty:
                 st.info("Belum ada rekaman baru dengan tarif per waktu. Rekaman lama "
                         "tidak direkayasa menjadi tarif historis.")
