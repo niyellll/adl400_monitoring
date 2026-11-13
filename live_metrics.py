@@ -57,7 +57,7 @@ def daily_energy_cost(con, slave, source, table, day_start):
     missing = max(0.0, raw - allocated)
     tolerance = max(1e-6, abs(raw) * 1e-6)
     mixed = len({r["mode"] for r in valid}) > 1
-    complete = abs(raw - allocated) <= tolerance and not mixed and len(snapshots) == len(points) - 1
+    complete = abs(raw - allocated) <= tolerance and not mixed and len(valid) == len(points) - 1
     reason = ("Lengkap" if complete else
               "Skema tarif berubah hari ini" if mixed else
               "Ada kWh belum teralokasi atau snapshot tarif tidak lengkap")
