@@ -69,7 +69,8 @@ def cycle(demo, state):
                 data = (simulate(state, m["slave"]) if demo else
                         modbus.read_meter(client, m["slave"], model=model))
                 db.insert_reading(m["slave"], data)
-                db.record_poll_result(m["slave"], True)
+                if not demo:
+                    db.record_poll_result(m["slave"], True)
                 print(f"[OK ] {m['tenant']} ({model}, slave {m['slave']}): "
                       f"{data['kwh']} kWh, {data['kw']} kW")
             except Exception as e:  # satu meter gagal tidak boleh menghentikan yang lain
