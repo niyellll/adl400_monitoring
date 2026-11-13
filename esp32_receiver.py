@@ -82,6 +82,7 @@ class Receiver(BaseHTTPRequestHandler):
             if slave not in {m["slave"] for m in meters}:
                 return self.respond(422, "slave_not_registered_or_inactive")
             db.insert_esp32_real_reading(slave, data)
+            db.record_poll_result(slave, True, source="esp32")
             print(f"[REAL] slave={slave} kwh={data['kwh']} kw={data['kw']} "
                   f"at {datetime.now():%Y-%m-%d %H:%M:%S}", flush=True)
             return self.respond(200, "saved")
