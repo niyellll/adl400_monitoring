@@ -68,6 +68,15 @@ def init():
         CREATE INDEX IF NOT EXISTS idx_reading_tariffs_ts
             ON reading_tariffs (ts, source);
         """)
+        CREATE TABLE IF NOT EXISTS meter_poll_status (
+            slave INTEGER NOT NULL,
+            source TEXT NOT NULL,
+            last_attempt TEXT NOT NULL,
+            last_success TEXT,
+            consecutive_failures INTEGER NOT NULL DEFAULT 0,
+            last_error TEXT,
+            PRIMARY KEY (slave, source)
+        );
         # Forward-only migration: no existing readings or tariff history is removed.
         meter_columns = {r["name"] for r in con.execute("PRAGMA table_info(meters)")}
         if "tariff_mode" not in meter_columns:
@@ -208,3 +217,34 @@ def last_reading(slave):
         r = con.execute(f"SELECT * FROM {table} WHERE slave=? ORDER BY ts DESC LIMIT 1",
                         (slave,)).fetchone()
         return dict(r) if r else None
+
+
+def record_poll_result(slave, ok, error=None, source="serial", ts=None):
+    """Record communication health separately from immutable meter readings."""
+    ts = ts or datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    with connect() as con:
+        con.execute(
+            """INSERT INTO meter_poll_status
+               (slave, source, last_attempt, last_success, consecutive_failures, last_error)
+               VALUES (?, ?, ?, ?, ?, ?)
+               ON CONFLICT(slave, source) DO UPDATE SET
+                 last_attempt=excluded.last_attempt,
+                 last_success=CASE WHEN excluded.consecutive_failures=0
+                                   THEN excluded.last_success
+                                   ELSE meter_poll_status.last_success END,
+                 consecutive_failures=CASE WHEN excluded.consecutive_failures=0 THEN 0
+                                           ELSE meter_poll_status.consecutive_failures+1 END,
+                 last_error=excluded.last_error""",
+            (slave, source, ts, ts if ok else None,
+             0 if ok else 1, None if ok else str(error or "Tidak ada respons")[:500]),
+        )
+
+
+def get_poll_status(slave, source=None):
+    if source is None:
+        source = "esp32" if get_settings().get("conn_type") == "esp32" else "serial"
+    with connect() as con:
+        row = con.execute(
+            "SELECT * FROM meter_poll_status WHERE slave=? AND source=?",
+            (slave, source)).fetchone()
+        return dict(row) if row else None
