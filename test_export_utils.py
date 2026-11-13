@@ -39,6 +39,21 @@ class ExportTests(unittest.TestCase):
         self.assertIn("ts;slave;Tenant;kw;v_a;i_a", result)
         self.assertIn("8,177", result)
 
+    def test_no_long_float_tails_in_downloads(self):
+        frame = pd.DataFrame({
+            "Waktu": ["2026-11-13 10:52:59"],
+            "Pemakaian (kWh)": [0.009999999999990905],
+            "Estimasi energi (Rp)": [21.99999999997999],
+        })
+        csv_text = excel_csv(frame).decode("utf-8-sig")
+        self.assertIn("0,01", csv_text)
+        self.assertNotIn("0,009999999", csv_text)
+        self.assertNotIn("21,99999999", csv_text)
+        wb = load_workbook(io.BytesIO(formatted_xlsx(frame, "Tarif")))
+        sheet = wb["Tarif"]
+        self.assertEqual(sheet["B2"].value, 0.01)
+        self.assertEqual(sheet["C2"].value, 22)
+
     def test_empty_rows_still_have_headers(self):
         result = formatted_xlsx(self.df.iloc[:0], "Empty")
         ws = load_workbook(io.BytesIO(result))["Empty"]
