@@ -9,7 +9,7 @@ import db
 import tariff
 
 
-def compute(start_ts: str, end_ts: str) -> pd.DataFrame:
+def compute(start_ts: str, end_ts: str, include_inactive: bool = False) -> pd.DataFrame:
     settings = db.get_settings()
     default_rate = float(settings["tarif"])
     ppj_rate = float(settings["ppj_persen"]) / 100
@@ -19,7 +19,7 @@ def compute(start_ts: str, end_ts: str) -> pd.DataFrame:
     output = []
 
     with db.connect() as con:
-        for meter in db.get_meters():
+        for meter in db.get_meters(only_active=not include_inactive):
             slave = meter["slave"]
             points = con.execute(
                 f"SELECT ts, kwh FROM {table} WHERE slave=? AND ts>=? AND ts<=? "
