@@ -67,7 +67,6 @@ def init():
         );
         CREATE INDEX IF NOT EXISTS idx_reading_tariffs_ts
             ON reading_tariffs (ts, source);
-        """)
         CREATE TABLE IF NOT EXISTS meter_poll_status (
             slave INTEGER NOT NULL,
             source TEXT NOT NULL,
@@ -77,6 +76,7 @@ def init():
             last_error TEXT,
             PRIMARY KEY (slave, source)
         );
+        """)
         # Forward-only migration: no existing readings or tariff history is removed.
         meter_columns = {r["name"] for r in con.execute("PRAGMA table_info(meters)")}
         if "tariff_mode" not in meter_columns:
