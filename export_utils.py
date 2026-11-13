@@ -11,16 +11,26 @@ from openpyxl.utils import get_column_letter
 from openpyxl.worksheet.table import Table, TableStyleInfo
 
 
+def _clean_numeric(frame):
+    """Keep numeric columns numeric without long binary-float tails."""
+    clean = frame.copy()
+    for name in clean.select_dtypes(include="number").columns:
+        label = str(name).lower()
+        digits = 3 if any(k in label for k in ("kwh", "kw", "pemakaian", "pengali", "pf", "arus", "tegangan")) else 2
+        clean[name] = clean[name].round(digits)
+    return clean
+
+
 def excel_csv(frame):
     """UTF-8 BOM; Excel recognizes sep=; regardless of locale delimiter."""
-    raw = frame.to_csv(index=False, sep=";", decimal=",", lineterminator="\r\n")
+    raw = _clean_numeric(frame).to_csv(index=False, sep=";", decimal=",", lineterminator="\r\n")
     return ("\ufeffsep=;\r\n" + raw).encode("utf-8")
 
 
 def formatted_xlsx(frame, sheet_name="Data Monitoring"):
     """True Excel workbook, separate columns, frozen header, filters and units."""
     buf = io.BytesIO()
-    clean = frame.copy()
+    clean = _clean_numeric(frame)
     for column in clean.columns:
         if pd.api.types.is_datetime64_any_dtype(clean[column]):
             clean[column] = clean[column].dt.strftime("%Y-%m-%d %H:%M:%S")
