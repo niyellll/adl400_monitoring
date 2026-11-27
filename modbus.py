@@ -96,30 +96,72 @@ class RTUClient:
 
 
 class TCPClient:
-    """Modbus TCP, untuk gateway RS485-Ethernet/WiFi (mode Modbus TCP)."""
+    """Modbus TCP client for an RS485 gateway in TCP/RTU conversion mode.
 
-    def __init__(self, host, port=502, timeout=2.0):
-        self.sock = socket.create_connection((host, port), timeout=timeout)
+    Each response must match the request (transaction, unit, function, length).
+    Invalid or truncated packets must never be decoded as meter readings.
+    """
+
+    def __init__(self, host, port=502, timeout=3.0):
+        self.sock = socket.create_connection((host, int(port)), timeout=timeout)
+        self.sock.settimeout(timeout)
         self.tid = 0
 
     def _recv(self, n):
         buf = b""
         while len(buf) < n:
-            chunk = self.sock.recv(n - len(buf))
+            try:
+                chunk = self.sock.recv(n - len(buf))
+            except (socket.timeout, OSError) as exc:
+                raise ModbusError(f"koneksi TCP gagal saat membaca respons: {exc}") from exc
             if not chunk:
-                raise ModbusError("koneksi TCP terputus")
+                raise ModbusError("koneksi TCP terputus sebelum respons lengkap")
             buf += chunk
         return buf
 
     def read_holding(self, slave, addr, count):
+        if not (isinstance(slave, int) and 1 <= slave <= 247):
+            raise ValueError("slave harus integer 1..247")
+        if not (isinstance(addr, int) and 0 <= addr <= 0xFFFF):
+            raise ValueError("alamat register tidak valid")
+        if not (isinstance(count, int) and 1 <= count <= 125
+                and addr + count <= 0x10000):
+            raise ValueError("jumlah/alamat register Modbus tidak valid")
+
         self.tid = (self.tid + 1) & 0xFFFF
         req = struct.pack(">HHHBBHH", self.tid, 0, 6, slave, 3, addr, count)
-        self.sock.sendall(req)
-        hdr = self._recv(9)  # MBAP(7) + function + byte count / exception
-        if hdr[7] & 0x80:
-            raise ModbusError(f"slave {slave}: exception code {hdr[8]}")
-        data = self._recv(hdr[8])
-        return list(struct.unpack(">" + "H" * (len(data) // 2), data))
+        try:
+            self.sock.sendall(req)
+        except OSError as exc:
+            raise ModbusError(f"gagal mengirim permintaan TCP: {exc}") from exc
+
+        # Modbus TCP MBAP: transaction(2), protocol(2), length(2), unit(1).
+        header = self._recv(7)
+        response_tid, protocol, length, unit = struct.unpack(">HHHB", header)
+        if response_tid != self.tid:
+            raise ModbusError("transaction ID respons tidak cocok")
+        if protocol != 0:
+            raise ModbusError("protocol ID respons bukan Modbus TCP")
+        if unit != slave:
+            raise ModbusError(f"slave respons {unit}, diharapkan {slave}")
+        if not 3 <= length <= 253:
+            raise ModbusError(f"panjang frame Modbus tidak valid: {length}")
+
+        pdu = self._recv(length - 1)
+        function = pdu[0]
+        if function == 0x83:
+            if len(pdu) != 2:
+                raise ModbusError("panjang exception Modbus tidak valid")
+            raise ModbusError(f"slave {slave}: exception code {pdu[1]}")
+        if function != 0x03:
+            raise ModbusError(f"function code tidak cocok: 0x{function:02X}")
+        expected_bytes = 2 * count
+        if len(pdu) != 2 + expected_bytes or pdu[1] != expected_bytes:
+            raise ModbusError(
+                f"ukuran data register tidak cocok: {len(pdu) - 2} byte, "
+                f"diharapkan {expected_bytes}"
+            )
+        return list(struct.unpack(">" + "H" * count, pdu[2:]))
 
     def close(self):
         self.sock.close()
