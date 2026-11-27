@@ -1,0 +1,23 @@
+name: Verify USR-DR164 read-only gateway
+
+on:
+  pull_request:
+    branches: [main]
+  push:
+    branches: [main]
+
+jobs:
+  gateway-tests:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Install minimal serial dependency
+        run: python -m pip install "pyserial>=3.5"
+      - name: Check Python syntax
+        run: python -m compileall -q modbus.py usr_dr164_modbus.py test_usr_dr164_modbus.py
+      - name: Test strict TCP frames and read-only behavior
+        run: python -m unittest -v test_usr_dr164_modbus

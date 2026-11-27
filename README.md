@@ -69,3 +69,22 @@ Alur: ADL400 (Modbus RTU RS485) → transceiver RS485-TTL yang kompatibel 3,3 V 
 Pembacaan ESP32 disimpan pada tabel khusus `esp32_real_readings`. Grafik dan Tagihan Live memilih tabel sesuai mode, sehingga simulasi dari `esp32_test.db` **tidak tercampur** dengan penagihan. File `esp32_test.db` dari latihan tetap terpisah.
 
 **Batasan deploy:** Streamlit Community Cloud menggunakan filesystem sementara dan tidak dapat membaca SQLite di laptop secara langsung. Mode Live pada Cloud memerlukan infrastruktur database persisten dan koneksi terproteksi tersendiri; fitur ini dirancang pertama untuk laptop/mini PC di lokasi. Pertahankan SQLite lokal, lakukan backup berkala. Jangan menjalankan `collector.py --demo` pada database tagihan nyata.
+
+## USR-DR164 Wi-Fi Gateway (Modbus TCP, tanpa ESP32)
+
+Aplikasi ini **sudah mempunyai mode `Gateway Modbus TCP`** pada Live → Pengaturan,
+menggunakan collector Python yang sudah ada. Untuk gateway PUSR USR-DR164,
+tersedia alat commissioning **read-only** yang tidak menyentuh database:
+
+```powershell
+python usr_dr164_modbus.py --host 192.168.1.80 --port 8899 --slave 39 --model ADL400
+python usr_dr164_modbus.py --host 192.168.1.80 --port 8899 --slave 39 --model ADL400 --full
+```
+
+IP/port di atas contoh, bukan alamat gateway otomatis. Perangkat harus diatur
+ke **Socket A / TCP Server / Modbus Protocol Conversion / serial 9600 8N1**
+sesuai meter. Jangan beralih ke mode kolektor Live sebelum hasil pembacaan
+cocok dengan layar kWh meter dan backup database tersedia.
+
+**Panduan lengkap, pengamanan historis, konfigurasi, dan tes:**
+[USR_DR164_SETUP.md](USR_DR164_SETUP.md).
